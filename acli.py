@@ -33,10 +33,13 @@ import cobra.model.pol
 import requests
 import re
 import sys
+import datetime
 from requests.packages.urllib3.exceptions import InsecureRequestWarning, InsecurePlatformWarning, SNIMissingWarning
 from cmd import Cmd
 from operator import attrgetter
 from getpass import getpass
+from prettytable import PrettyTable
+
 
 try:
     from aci_settings import FABRICS
@@ -56,6 +59,10 @@ class Apic(Cmd):
         Cmd.__init__(self)
         import readline
         readline.set_completer_delims(' ')
+        if 'libedit' in readline.__doc__:
+            readline.parse_and_bind("bind ^I rl_complete")
+        else:
+            readline.parse_and_bind("tab: complete")
         self.can_connect = ''
         self.fabric = []
         self.snapshots = []
@@ -64,6 +71,7 @@ class Apic(Cmd):
         self.vlan_pools = []
         self.idict = {}
         self.epgs = []
+
 
     def do_login(self, args):
         """Usage: login [FABRIC_NAME]"""
@@ -526,10 +534,12 @@ class Apic(Cmd):
     def vlan_usage(self, vlan):
         if self.vlan_pools:
             print 'VLAN:', vlan
-            template = '{0:30} {1:10} {2:6} {3:6} {4:32}'
-            print(template.format('POOL NAME', 'ALLOCATION', 'FROM', 'TO', 'DOMAINS'))
-            print(template.format('------------------------------', '----------', '------', '------',
-                                  '--------------------------------'))
+
+            y = PrettyTable(
+                ['POOL NAME', 'ALLOCATION', 'FROM', 'TO', 'DOMAINS'])
+            y.align = "l"
+            y.vertical_char = ' '
+            y.junction_char = ' '
 
             for item in self.vlan_pools:
                 if (int(vlan) >= item['from_vlan']) and (int(vlan) <= item['to_vlan']):
@@ -538,14 +548,17 @@ class Apic(Cmd):
                     from_vlan = item['from_vlan']
                     to_vlan = item['to_vlan']
                     domains = str(item['domains'])[1:-2]
-                    print(template.format(name, alloc, from_vlan, to_vlan, domains))
+                    y.add_row([name, alloc, from_vlan, to_vlan, domains])
+        print(y)
 
         if self.epgs:
             print '\n'
-            template = '{0:24} {1:16} {2:16} {3:24}'
-            print(template.format('TENANT', 'APP_PROFILE', 'EPG', 'TAGS'))
-            print(template.format('------------------------', '----------------', '----------------',
-                                  '------------------------'))
+            y = PrettyTable(
+                ['TENANT', 'APP_PROFILE', 'EPG', 'TAGS'])
+            y.align = "l"
+            y.vertical_char = ' '
+            y.junction_char = ' '
+
             for epg in self.epgs:
                 vlan_used = False
                 for path in epg['paths']:
@@ -558,7 +571,8 @@ class Apic(Cmd):
                     epg_name = epg['name']
                     tags = epg['tags']
 
-                    print(template.format(tenant, ap_profile, epg_name, tags))
+                    y.add_row([tenant, ap_profile, epg_name, tags])
+        print(y)
        
     def print_epgs(self):
         for epg in self.epgs:
@@ -574,6 +588,8 @@ class Apic(Cmd):
             print(template.format('----------', '----------', '------', '--------', '-------------------------',
                                   '------', '------', '------------------------------',
                                   '------------------------------'))
+
+
             for path in epg['paths']:
                 if 'vpc' in path:
                     for idx in self.idict:
@@ -587,6 +603,7 @@ class Apic(Cmd):
                             port_sr_name = self.idict[idx]['port_sr_name']
                             policy_group = self.idict[idx]['policy_group']
                             vlan = path['encap']
+                            y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group])
                             print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                                   policy_group))
     
@@ -603,14 +620,16 @@ class Apic(Cmd):
                     vlan = path['encap']
                     print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                           policy_group))
+
     
     def print_interface(self):
         print '* - flag indicates configured but not mapped to any EPG interfaces'
-        template = '{0:1} {1:10} {2:10} {3:8} {4:25} {5:6} {6:6} {7:20} {8:20}'
-        print(template.format('F', 'NODE', 'INTERFACE', 'TOPOLOGY', 'USAGE', 'STATE', 'SPEED', 'PORT_SR_NAME',
-                              'POLICY_GROUP'))
-        print(template.format('-', '----------', '----------', '--------', '-------------------------', '------',
-                              '------', '--------------------', '--------------------'))
+
+        y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME", "POLICY_GROUP"])
+        y.align = "l"
+        y.vertical_char = ' '
+        y.junction_char = ' '
+
         for key in sorted(self.idict):
             flag = ''
             node = self.idict[key]['node']
@@ -623,27 +642,34 @@ class Apic(Cmd):
             policy_group = self.idict[key]['policy_group']
             if ('discovery' in usage) and (port_sr_name or policy_group):
                 flag = '*'
-            print(template.format(flag, node, intf_id, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group))
+            y.add_row([flag,node,intf_id,port_t,usage,oper_st,oper_speed,port_sr_name,policy_group])
+        print(y)
 
     def print_vlan_pool(self):
-        template = '{0:24} {1:10} {2:6} {3:6} {4:32}'
-        print(template.format('NAME', 'ALLOCATION', 'FROM', 'TO', 'DOMAINS'))
-        print(template.format('------------------------', '----------', '------', '------',
-                              '--------------------------------'))
+
+        y = PrettyTable(["NAME", "ALLOCATION", "FROM", "TO", "DOMAINS"])
+        y.align = "l"
+
+        y.vertical_char = ' '
+        y.junction_char = ' '
         for item in self.vlan_pools:
             name = item['name']
             alloc = item['alloc']
             from_vlan = item['from_vlan']
             to_vlan = item['to_vlan']
             domains = str(item['domains'])[1:-1]
-            print(template.format(name, alloc, from_vlan, to_vlan, domains))
+            y.add_row([name,alloc,from_vlan,to_vlan,domains])
+        print(y)
+
 
     def print_snapshot(self):
         self.collect_snapshots()
-        template = '{0:3} {1:12} {2:30} {3:32}'
-        print(template.format('ID', 'TRIGGER', 'TIME', 'DESCRIPTION'))
-        print(template.format('---', '------------', '------------------------------',
-                              '--------------------------------'))
+        y = PrettyTable(["ID", "TRIGGER", "TIME", "DESCRIPTION" ])
+        y.align = "l"
+        y.vertical_char = ' '
+        y.junction_char = ' '
+
+
         snapshot_id = 0
         for snapshot in self.snapshots:
             trigger = ''
@@ -656,9 +682,17 @@ class Apic(Cmd):
                 trigger = 'defaultAuto'
 
             snapshot_time = str(snapshot.createTime)
+            snapshot_time1 = snapshot_time[:10]
+            time = snapshot_time[11:19]
+
+            new = datetime.datetime.strptime(snapshot_time1, '%Y-%m-%d')
+            newsnapshot = new.strftime('%a %d %b')
+            newdatetime = newsnapshot + ' ' + time
             descr = str(snapshot.descr)
-            print(template.format(snapshot_id, trigger, snapshot_time, descr))
+            y.add_row([snapshot_id,trigger,newdatetime,descr])
             snapshot_id += 1
+        print(y)
+
              
  
 if __name__ == '__main__':
