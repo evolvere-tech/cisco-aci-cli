@@ -15,7 +15,7 @@ Required
 
 If you have git installed, clone the repository
 
-    git clone https://github.com/evolvere-tech/acli.git
+    git clone https://github.com/evolvere-tech/cisco-aci.git
 
 ## Installation
 
