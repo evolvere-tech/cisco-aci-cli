@@ -150,7 +150,7 @@ class Apic(Cmd):
         Retrieves information from Cisco ACI
         Usage:
         show epg [<epg_name>]
-        show interface [<node>]
+        show interface [<node>] [<leaf_interface, i.e. 1/10>]
         show vlan <vlan_id> | pool
         show snapshot
         """
@@ -171,9 +171,27 @@ class Apic(Cmd):
                 self.print_epgs()
             elif 'interface' in args:
                 parameters = args.split()
-                if len(parameters) == 2:
-                    self.get_interface_data(parameters[1])
-                    self.print_interface()
+                if len(parameters) >= 2:
+                    if (len(parameters) == 2) and (parameters[1] in self.leafs):
+                        self.get_interface_data(parameters[1])
+                        self.print_interface()
+                    elif (len(parameters) == 3) and (parameters[1] in self.leafs):
+                        print 'INFO: Interface', parameters[2], 'details'
+                        self.get_interface_data(parameters[1])
+                        self.get_epg_data(epg='ALL')
+                        try:
+                            idx = int(parameters[1]) * 1000 + int(parameters[2].split('/')[0]) * 100 + \
+                                  int(parameters[2].split('/')[-1])
+
+                            if idx in self.idict:
+                                self.print_interface_details(idx)
+                            else:
+                                print 'ERROR: Interface is not present on the Node or not a LEAF port', parameters[1]
+                        except Exception as error:
+                            print 'ERROR: ', str(error)
+
+                    else:
+                        print 'ERROR: Incorrect Node or Interface'
                 else:
                     self.get_interface_data()
                     self.print_interface()
@@ -589,7 +607,6 @@ class Apic(Cmd):
                                   '------', '------', '------------------------------',
                                   '------------------------------'))
 
-
             for path in epg['paths']:
                 if 'vpc' in path:
                     for idx in self.idict:
@@ -603,7 +620,8 @@ class Apic(Cmd):
                             port_sr_name = self.idict[idx]['port_sr_name']
                             policy_group = self.idict[idx]['policy_group']
                             vlan = path['encap']
-                            y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group])
+                            y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
+                                       policy_group])
                             print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                                   policy_group))
     
@@ -621,11 +639,11 @@ class Apic(Cmd):
                     print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                           policy_group))
 
-    
     def print_interface(self):
         print '* - flag indicates configured but not mapped to any EPG interfaces'
 
-        y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME", "POLICY_GROUP"])
+        y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLOGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME",
+                         "POLICY_GROUP"])
         y.align = "l"
         y.vertical_char = ' '
         y.junction_char = ' '
@@ -642,11 +660,52 @@ class Apic(Cmd):
             policy_group = self.idict[key]['policy_group']
             if ('discovery' in usage) and (port_sr_name or policy_group):
                 flag = '*'
-            y.add_row([flag,node,intf_id,port_t,usage,oper_st,oper_speed,port_sr_name,policy_group])
+            y.add_row([flag, node, intf_id, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group])
         print(y)
 
-    def print_vlan_pool(self):
+    def print_interface_details(self, key):
+        print '* - flag indicates configured but not mapped to any EPG interfaces'
 
+        y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLOGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME",
+                         "POLICY_GROUP"])
+        y.align = "l"
+        y.vertical_char = ' '
+        y.junction_char = ' '
+
+        flag = ''
+        node = self.idict[key]['node']
+        intf_id = self.idict[key]['intf_id']
+        port_t = self.idict[key]['portT']
+        usage = self.idict[key]['usage']
+        oper_st = self.idict[key]['operSt']
+        oper_speed = self.idict[key]['operSpeed']
+        port_sr_name = self.idict[key]['port_sr_name']
+        policy_group = self.idict[key]['policy_group']
+        if ('discovery' in usage) and (port_sr_name or policy_group):
+            flag = '*'
+        y.add_row([flag, node, intf_id, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group])
+        print(y)
+
+        print '\n EPG Binding Info: \n'
+
+        y = PrettyTable(["TENANT", "APP PROFILE", "EPG", "BD", "VLAN_ENCAP"])
+        y.align = "l"
+        y.vertical_char = ' '
+        y.junction_char = ' '
+
+        for epg in self.epgs:
+            for path in epg['paths']:
+                if 'vpc' in path:
+                    if (path['vpc'] == self.idict[key]['policy_group']) and (str(key)[:3] in path['protpaths']):
+                        vlan = path['encap']
+                        y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+
+                elif path['idx'] == key:
+                    vlan = path['encap']
+                    y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+        print (y)
+
+    def print_vlan_pool(self):
         y = PrettyTable(["NAME", "ALLOCATION", "FROM", "TO", "DOMAINS"])
         y.align = "l"
 
@@ -658,9 +717,8 @@ class Apic(Cmd):
             from_vlan = item['from_vlan']
             to_vlan = item['to_vlan']
             domains = str(item['domains'])[1:-1]
-            y.add_row([name,alloc,from_vlan,to_vlan,domains])
+            y.add_row([name, alloc, from_vlan, to_vlan, domains])
         print(y)
-
 
     def print_snapshot(self):
         self.collect_snapshots()
@@ -689,16 +747,19 @@ class Apic(Cmd):
             newsnapshot = new.strftime('%a %d %b')
             newdatetime = newsnapshot + ' ' + time
             descr = str(snapshot.descr)
-            y.add_row([snapshot_id,trigger,newdatetime,descr])
+            y.add_row([snapshot_id, trigger, newdatetime, descr])
             snapshot_id += 1
         print(y)
 
-             
  
 if __name__ == '__main__':
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
     requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
     requests.packages.urllib3.disable_warnings(SNIMissingWarning)
-    apic = Apic()
-    apic.prompt = 'ACLI()>'
-    apic.cmdloop('Starting ACLI...')
+    try:
+        apic = Apic()
+        apic.prompt = 'ACLI()>'
+        apic.cmdloop('Starting ACLI...')
+    except KeyboardInterrupt:
+        print "\nINFO: ACLI Shell was interrupted by Ctrl-C"
+
