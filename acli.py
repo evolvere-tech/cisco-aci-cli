@@ -651,7 +651,7 @@ class Apic(Cmd):
 
         for key in sorted(self.idict):
             flag = ''
-            node = self.idict[key]['node']
+            node = self.idict[key]['node'].replace('node-', '')
             intf_id = self.idict[key]['intf_id']
             port_t = self.idict[key]['portT']
             usage = self.idict[key]['usage']
@@ -674,7 +674,7 @@ class Apic(Cmd):
         y.junction_char = ' '
 
         flag = ''
-        node = self.idict[key]['node']
+        node = self.idict[key]['node'].replace('node-', '')
         intf_id = self.idict[key]['intf_id']
         port_t = self.idict[key]['portT']
         usage = self.idict[key]['usage']
