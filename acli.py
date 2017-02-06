@@ -435,27 +435,28 @@ class Apic(Cmd):
                         dn_query = cobra.mit.request.DnQuery(str(switch_profile_child.tDn))
                         dn_query.subtree = 'children'
                         hports = self.md.query(dn_query)
-                        for hport in hports[0].children:
-                            hport_dict = {}
-                            policy_group = ''
-                            if 'hports' in str(hport.rn):
-                                dn_query = cobra.mit.request.DnQuery(str(hport.dn))
-                                dn_query.subtree = 'children'
-                                hport_query = self.md.query(dn_query)
-                                for hport_child in hport_query[0].children:
-                                    if 'rsaccBaseGrp' in str(hport_child.rn):
-                                        policy_group = str(hport_child.tDn).split('-', 1)[-1]
-    
-                                    elif 'portblk' in str(hport_child.rn):
-                                        port_blk = self.md.lookupByDn(str(hport_child.dn))
-                                        for intf in range(int(port_blk.fromPort), int(port_blk.toPort) + 1):
-                                            intf_list_key = '1/' + str(intf)
-                                            intf_list_value = str(hport.name)
-                                            hport_dict.setdefault('interfaces', []).append({
-                                                intf_list_key: intf_list_value})
-    
-                                hport_dict['policy_group'] = policy_group
-                                access_port_selectors.append(hport_dict)
+                        if hports:
+                            for hport in hports[0].children:
+                                hport_dict = {}
+                                policy_group = ''
+                                if 'hports' in str(hport.rn):
+                                    dn_query = cobra.mit.request.DnQuery(str(hport.dn))
+                                    dn_query.subtree = 'children'
+                                    hport_query = self.md.query(dn_query)
+                                    for hport_child in hport_query[0].children:
+                                        if 'rsaccBaseGrp' in str(hport_child.rn):
+                                            policy_group = str(hport_child.tDn).split('-', 1)[-1]
+
+                                        elif 'portblk' in str(hport_child.rn):
+                                            port_blk = self.md.lookupByDn(str(hport_child.dn))
+                                            for intf in range(int(port_blk.fromPort), int(port_blk.toPort) + 1):
+                                                intf_list_key = '1/' + str(intf)
+                                                intf_list_value = str(hport.name)
+                                                hport_dict.setdefault('interfaces', []).append({
+                                                    intf_list_key: intf_list_value})
+
+                                    hport_dict['policy_group'] = policy_group
+                                    access_port_selectors.append(hport_dict)
     
                     elif 'leaves' in str(switch_profile_child.rn):
                         dn_query = cobra.mit.request.DnQuery(str(switch_profile_child.dn))
