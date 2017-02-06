@@ -10,6 +10,7 @@ Required
 
 * Python 2.7+
 * Cobra SDK (http://cobra.readthedocs.io/en/latest/)
+* PrettyTable
 
 ## Downloading
 
