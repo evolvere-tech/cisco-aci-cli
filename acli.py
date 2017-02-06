@@ -601,18 +601,19 @@ class Apic(Cmd):
             print 'EPG:', epg['name']
             print 'TAG:', epg['tags']
             print 'BD:', epg['bd']
-            template = '{0:10} {1:10} {2:6} {3:8} {4:25} {5:6} {6:6} {7:30} {8:30}'
-            print(template.format('NODE', 'INTERFACE', 'VLAN', 'TOPOLOGY', 'USAGE', 'STATE', 'SPEED', 'PORT_SR_NAME',
-                                  'POLICY_GROUP'))
-            print(template.format('----------', '----------', '------', '--------', '-------------------------',
-                                  '------', '------', '------------------------------',
-                                  '------------------------------'))
+
+            y = PrettyTable(
+                ['NODE', 'INTERFACE', 'VLAN', 'TOPOLOGY', 'USAGE', 'STATE', 'SPEED', 'PORT_SR_NAME',
+                                  'POLICY_GROUP'])
+            y.align = "l"
+            y.vertical_char = ' '
+            y.junction_char = ' '
 
             for path in epg['paths']:
                 if 'vpc' in path:
                     for idx in self.idict:
                         if (path['vpc'] == self.idict[idx]['policy_group']) and (str(idx)[:3] in path['protpaths']):
-                            node = self.idict[idx]['node']
+                            node = self.idict[idx]['node'].replace('node-', '')
                             intf_id = self.idict[idx]['intf_id']
                             port_t = self.idict[idx]['portT']
                             usage = self.idict[idx]['usage']
@@ -623,12 +624,10 @@ class Apic(Cmd):
                             vlan = path['encap']
                             y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                        policy_group])
-                            print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
-                                                  policy_group))
-    
+
                 elif path['idx'] in self.idict:
                     key = path['idx']
-                    node = self.idict[key]['node']
+                    node = self.idict[key]['node'].replace('node-', '')
                     intf_id = self.idict[key]['intf_id']
                     port_t = self.idict[key]['portT']
                     usage = self.idict[key]['usage']
@@ -637,8 +636,10 @@ class Apic(Cmd):
                     port_sr_name = self.idict[key]['port_sr_name']
                     policy_group = self.idict[key]['policy_group']
                     vlan = path['encap']
-                    print(template.format(node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
-                                          policy_group))
+                    y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
+                               policy_group])
+
+            print(y)
 
     def print_interface(self):
         print '* - flag indicates configured but not mapped to any EPG interfaces'
