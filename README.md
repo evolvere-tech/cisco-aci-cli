@@ -44,9 +44,9 @@ Script will try all the APICs in the aci_settings file in round-robin. No need t
 
 Outputs EPG information along with static bindings, status of physical interfaces, interface selectors and port policy groups for all EPGs or for selected EPG (EPG names are auto-completed by using 'TAB').
 
-	show interface [node]
+	show interface [node] [interface]
 
-Collects status of physical interfaces on Leaf switches and related fabric configuration (port selectors, policy groups). 
+Collects status of physical interfaces on Leaf switches and related fabric configuration (port selectors, policy groups). If node and interface options specified then shell returns EPG mappings for the target interface. 
 
 	show vlan <vlan_id> | pool
 
