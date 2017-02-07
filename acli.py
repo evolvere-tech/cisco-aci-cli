@@ -71,7 +71,10 @@ class Apic(Cmd):
         self.vlan_pools = []
         self.idict = {}
         self.epgs = []
-
+        self.refresh_time_epoch = 0
+        self.username = ''
+        self.password = ''
+        self.address = ''
 
     def do_login(self, args):
         """Usage: login [FABRIC_NAME]"""
@@ -80,27 +83,29 @@ class Apic(Cmd):
                 self.disconnect()
             except:
                 pass
+
         self.can_connect = ''
+
         if len(args) == 0:
             print "Usage: login [FABRIC_NAME]"    
         else:
             parameters = args.split()
             if parameters[0] in FABRICS.keys():
                 self.fabric = FABRICS[parameters[0]]
-                username = ''
-                password = ''
+                self.username = ''
+                self.password = ''
                 for apic_credentials in self.fabric:
                     if not apic_credentials['username'] or not apic_credentials['password']:
-                        if not username and not password:
-                            username = raw_input('Enter username: ')
-                            password = getpass()
+                        if not self.username and not self.password:
+                            self.username = raw_input('Enter username: ')
+                            self.password = getpass()
                     else:
-                        username = apic_credentials['username']
-                        password = apic_credentials['password']
+                        self.username = apic_credentials['username']
+                        self.password = apic_credentials['password']
 
-                    address = apic_credentials['address']
+                    self.address = apic_credentials['address']
                     try:
-                        self.connect(address=address, username=username, password=password)
+                        self.connect()
                         self.can_connect = parameters[0]
                         print 'Established connection to APIC in', self.can_connect
                         self.prompt = 'ACLI({})>'.format(self.can_connect)
@@ -144,7 +149,6 @@ class Apic(Cmd):
             print 'Login to a Fabric'
         return
 
-
     def do_show(self, args):
         """
         Retrieves information from Cisco ACI
@@ -176,7 +180,6 @@ class Apic(Cmd):
                         self.get_interface_data(parameters[1])
                         self.print_interface()
                     elif (len(parameters) == 3) and (parameters[1] in self.leafs):
-                        print 'INFO: Interface', parameters[2], 'details'
                         self.get_interface_data(parameters[1])
                         self.get_epg_data(epg='ALL')
                         try:
@@ -275,20 +278,34 @@ class Apic(Cmd):
     def emptyline(self):
         pass
 
-    def connect(self, **kwargs):
-        if kwargs:
-            apic_user = kwargs['username']
-            apic_password = kwargs['password']
-            apic_address = kwargs['address']
+    def connect(self):
 
-            ls = cobra.mit.session.LoginSession('https://' + apic_address, apic_user, apic_password)
-            self.md = cobra.mit.access.MoDirectory(ls)
-            self.md.login()
-            self.collect_epgs()
-            self.collect_leafs()
-        else:
-            self.md.login()
-    
+        self.ls = cobra.mit.session.LoginSession('https://' + self.address, self.username, self.password)
+        self.md = cobra.mit.access.MoDirectory(self.ls)
+        self.md.login()
+        # self.refresh_time_epoch = int(self.ls.refreshTime)
+        self.refresh_time_epoch = int(datetime.datetime.now().strftime('%s'))
+        self.collect_epgs()
+        self.collect_leafs()
+
+    def refresh_connection(self, timeout=90):
+        try:
+            current_time_epoch = int(datetime.datetime.now().strftime('%s'))
+
+            if current_time_epoch - self.refresh_time_epoch >= timeout:
+                self.connect()
+            else:
+                self.md.login()
+                self.refresh_time_epoch = current_time_epoch
+
+            return [0, ]
+
+        except:
+            print 'Lost connection to Fabric', self.can_connect
+            self.can_connect = ''
+            apic.prompt = 'ACLI()>'
+            return [1, ]
+
     def disconnect(self):
         try:
             self.md.logout()
@@ -310,12 +327,10 @@ class Apic(Cmd):
                 self.leafs.append(str(node.id))
     
     def collect_snapshots(self):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
 
         self.snapshots = []
@@ -324,12 +339,10 @@ class Apic(Cmd):
         return    
 
     def create_snapshot(self, description):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
 
         pol_uni = cobra.model.pol.Uni('')
@@ -346,12 +359,10 @@ class Apic(Cmd):
             return [1, ]
 
     def update_snapshot_description(self, snapshot_id, description):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
 
         snapshot = self.snapshots[int(snapshot_id)]
@@ -365,13 +376,12 @@ class Apic(Cmd):
             return [1, ]
     
     def get_epg_data(self, epg):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
+
         self.epgs = []
         if epg:
             if epg == 'ALL':
@@ -414,12 +424,10 @@ class Apic(Cmd):
                 self.epgs.append(epg_dict)
     
     def get_interface_data(self, target_node=''):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
 
         port_profiles = {}
@@ -525,12 +533,10 @@ class Apic(Cmd):
                 self.idict[key]['policy_group'] = ''
    
     def get_vlan_pool(self):
-        try:
-            self.md.login()
-        except:
-            print 'Lost connection to Fabric', self.can_connect
-            self.can_connect = ''
-            apic.prompt = 'ACLI()>'
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
             return
 
         self.vlan_pools = []
@@ -764,4 +770,5 @@ if __name__ == '__main__':
         apic.cmdloop('Starting ACLI...')
     except KeyboardInterrupt:
         print "\nINFO: ACLI Shell was interrupted by Ctrl-C"
+        apic.disconnect()
 
