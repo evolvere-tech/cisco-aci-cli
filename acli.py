@@ -431,60 +431,68 @@ class Apic(Cmd):
             return
 
         port_profiles = {}
-        switch_profiles = self.md.lookupByClass('infraNodeP', 'uni/infra', subtree='children')
-        
-        for switch_profile in switch_profiles:
-            nodes = []
-            access_port_selectors = []
-    
-            if switch_profile.numChildren > 0:
-                for switch_profile_child in switch_profile.children:
-                    if 'rsaccPortP' in str(switch_profile_child.rn):
-                        dn_query = cobra.mit.request.DnQuery(str(switch_profile_child.tDn))
-                        dn_query.subtree = 'children'
-                        hports = self.md.query(dn_query)
-                        if hports:
-                            for hport in hports[0].children:
+        port_to_switch_prof_map = {}
+
+        resp = self.md.lookupByClass('infraRtAccPortP', 'uni/infra')
+        for item in resp:
+            sw_sel = str(item.tDn).split('/')[2].replace('nprof-', '')
+            int_sel = str(item.dn).split('/')[2].replace('accportprof-', '')
+
+            port_to_switch_prof_map.setdefault(int_sel, []).append(sw_sel)
+
+        resp = self.md.lookupByClass('infraNodeBlk', 'uni/infra')
+
+        switch_prof_leaves = {}
+
+        for item in resp:
+
+            sw_sel = str(item.dn).split('/')[2].replace('nprof-', '')
+            for node in range(int(item.from_), int(item.to_) + 1):
+                switch_prof_leaves.setdefault(sw_sel, []).append(node)
+
+        resp = self.md.lookupByClass('infraHPortS', 'uni/infra', subtree='children')
+
+        access_port_selectors = {}
+
+        for item in resp:
+
+            isl = str(item.dn).split('/')[2].replace('accportprof-', '')
+
+            hport_name = str(item.name)
+            interfaces = []
+            if item.numChildren > 0:
+                pol_grp = ''
+                for child in item.children:
+
+                    if 'RsAccBaseGrp' in str(child.__class__):
+                        pol_grp = str(child.tDn).split('-', 1)[-1]
+                    elif 'PortBlk' in str(child.__class__):
+                        for intf in range(int(child.fromPort), int(child.toPort) + 1):
+                            intf_name = '1/' + str(intf)
+                            interfaces.append(intf_name)
+
+                access_port_selectors.setdefault(isl, []).append({'hport_name' : hport_name, 'policy_group': pol_grp,
+                                                'interfaces': interfaces})
+
+        for port_selector in access_port_selectors:
+            if port_selector in port_to_switch_prof_map:
+                for port_selector_item in access_port_selectors[port_selector]:
+                    policy_group = port_selector_item['policy_group']
+                    port_sr_name = port_selector_item['hport_name']
+                    nodes = []
+                    for sw_sel in port_to_switch_prof_map[port_selector]:
+                        if sw_sel in switch_prof_leaves:
+                            for node in switch_prof_leaves[sw_sel]:
+                                nodes.append(node)
+
+                    if nodes:
+                        for node in set(nodes):
+                            for intf in set(port_selector_item['interfaces']):
                                 hport_dict = {}
-                                policy_group = ''
-                                if 'hports' in str(hport.rn):
-                                    dn_query = cobra.mit.request.DnQuery(str(hport.dn))
-                                    dn_query.subtree = 'children'
-                                    hport_query = self.md.query(dn_query)
-                                    for hport_child in hport_query[0].children:
-                                        if 'rsaccBaseGrp' in str(hport_child.rn):
-                                            policy_group = str(hport_child.tDn).split('-', 1)[-1]
-
-                                        elif 'portblk' in str(hport_child.rn):
-                                            port_blk = self.md.lookupByDn(str(hport_child.dn))
-                                            for intf in range(int(port_blk.fromPort), int(port_blk.toPort) + 1):
-                                                intf_list_key = '1/' + str(intf)
-                                                intf_list_value = str(hport.name)
-                                                hport_dict.setdefault('interfaces', []).append({
-                                                    intf_list_key: intf_list_value})
-
-                                    hport_dict['policy_group'] = policy_group
-                                    access_port_selectors.append(hport_dict)
-    
-                    elif 'leaves' in str(switch_profile_child.rn):
-                        dn_query = cobra.mit.request.DnQuery(str(switch_profile_child.dn))
-                        dn_query.subtree = 'children'
-                        leaf_blocks = self.md.query(dn_query)
-                        for block in leaf_blocks[0].children:
-                            if 'nodeblk' in str(block.dn): 
-                                for node in range(int(block.from_), int(block.to_) + 1):
-                                    nodes.append(node)
-    
-                for node in nodes:
-                    for hport in access_port_selectors:
-                        policy_group = hport['policy_group']
-                        for hport_interface in hport['interfaces']:
-                            hport_dict = {}
-                            intf_name = str(hport_interface.keys()[0])
-                            key = int(node)*1000 + int(intf_name.split('/')[0])*100 + int(intf_name.split('/')[-1])
-                            hport_dict['policy_group'] = policy_group
-                            hport_dict['port_sr_name'] = hport_interface[intf_name]
-                            port_profiles[key] = hport_dict
+                                key = int(node)*1000 + int(intf.split('/')[0])*100 + int(intf.split('/')[-1])
+                                hport_dict['policy_group'] = policy_group
+                                hport_dict['port_sr_name'] = port_sr_name
+                                port_profiles[key] = hport_dict
 
         pods = self.md.lookupByClass('fabricPod', parentDn='topology')
         leaf_nodes = []
@@ -507,7 +515,8 @@ class Apic(Cmd):
                         idx = int(str(node).split('-')[-1])*1000 + int(intf_id.split('/')[0])*100 +\
                             int(intf_id.split('/')[-1])
                         self.idict[idx] = {'node': str(node), 'intf_id': intf_id, 'portT': str(intf.portT),
-                                           'usage': str(intf.usage), 'descr': str(intf.descr)}
+                                           'usage': str(intf.usage), 'descr': str(intf.descr), 'operSt': '',
+                                           'operSpeed': '', 'operDuplex': ''}
 
                 phy_intfs = self.md.lookupByClass('ethpmPhysIf', parentDn='')
                  
@@ -737,6 +746,7 @@ class Apic(Cmd):
 
 
         snapshot_id = 0
+
         for snapshot in self.snapshots:
             trigger = ''
             dn = str(snapshot.dn)
@@ -748,15 +758,10 @@ class Apic(Cmd):
                 trigger = 'defaultAuto'
 
             snapshot_time = str(snapshot.createTime)
-            snapshot_time1 = snapshot_time[:10]
-            time = snapshot_time[11:19]
-
-            new = datetime.datetime.strptime(snapshot_time1, '%Y-%m-%d')
-            newsnapshot = new.strftime('%a %d %b')
-            newdatetime = newsnapshot + ' ' + time
             descr = str(snapshot.descr)
-            y.add_row([snapshot_id, trigger, newdatetime, descr])
+            y.add_row([snapshot_id, trigger, snapshot_time, descr])
             snapshot_id += 1
+
         print(y)
 
  
