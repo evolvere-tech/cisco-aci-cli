@@ -42,7 +42,7 @@ from prettytable import PrettyTable
 
 
 try:
-    from aci_settings import FABRICS
+    from settings.aci_settings import FABRICS
 except:
     sys.exit('ERROR: Missing or incorrect aci_settings.py file.')
 
