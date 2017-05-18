@@ -4,6 +4,16 @@ The ACLI is a command line shell for Cisco ACI APIC. A set of commands was devel
 
 # Installation
 
+## Docker
+
+    docker run -it --rm evolvere/cisco-aci
+
+If you would like to use a local settings file, copy from repository and amend, then:
+
+    docker run -it --rm -v /tmp/settings:/cisco-aci/settings evolvere/cisco-aci
+
+where local settings file is /tmp/settings/aci_settings.py
+
 ## Environment
 
 Required
