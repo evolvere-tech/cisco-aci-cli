@@ -24,12 +24,6 @@
 #                                                                              #
 ################################################################################
 
-import cobra.mit.access
-import cobra.mit.session
-import cobra.mit.request
-import cobra.model.config
-import cobra.model.fabric
-import cobra.model.pol
 import requests
 import re
 import sys
