@@ -558,7 +558,6 @@ class Apic(Cmd):
                 options = '?query-target-filter=eq(fabricNode.id,"{0}")'.format(target_node)
             else:
                 options = ''
-            print 'OPTIONS', options
             uri = "https://{0}/api/class/fabricNode.json".format(self.apic_address)
             uri += options
             response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
