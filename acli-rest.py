@@ -24,6 +24,12 @@
 #                                                                              #
 ################################################################################
 
+import cobra.mit.access
+import cobra.mit.session
+import cobra.mit.request
+import cobra.model.config
+import cobra.model.fabric
+import cobra.model.pol
 import requests
 import re
 import sys
@@ -439,6 +445,9 @@ class Apic(Cmd):
                 self.epgs.append(epg_dict)
 
     def get_interface_data(self, target_node=''):
+        # Initialize self.idict
+        self.idict = {}
+
         # Populates self.idict:
         #
         # { "104146": {
@@ -462,7 +471,7 @@ class Apic(Cmd):
         #  'LF1_ACCESS': ['LF1_SPR']}
         #
         uri = "https://{0}/api/class/infraRtAccPortP.json".format(self.apic_address)
-        response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         for mo in response['imdata']:
             mo_class = mo.keys()[0]
             sw_sel = mo[mo_class]['attributes']['tDn'].split('/')[2].replace('nprof-', '')
@@ -475,7 +484,7 @@ class Apic(Cmd):
         #  'LF1_SPR': [101]]
         #
         uri = "https://{0}/api/class/infraNodeBlk.json".format(self.apic_address)
-        response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         for mo in response['imdata']:
             mo_class = mo.keys()[0]
             sw_sel = mo[mo_class]['attributes']['dn'].split('/')[2].replace('nprof-', '')
@@ -491,7 +500,7 @@ class Apic(Cmd):
         uri = "https://{0}/api/class/infraHPortS.json".format(self.apic_address)
         options = '?query-target=subtree'
         uri += options
-        response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         for mo in response['imdata']:
             mo_class = mo.keys()[0]
             # Relies on ACI returning objects in PortBlk, RsAccBaseGrp, HPortS order
@@ -540,7 +549,7 @@ class Apic(Cmd):
         # [101, 102, 103, 104]
         #
         uri = "https://{0}/api/class/fabricPod.json".format(self.apic_address)
-        response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         pods = response['imdata']
         for pod_dict in pods:
             pod_mo_class = pod_dict.keys()[0]
@@ -549,9 +558,10 @@ class Apic(Cmd):
                 options = '?query-target-filter=eq(fabricNode.id,"{0}")'.format(target_node)
             else:
                 options = ''
+            print 'OPTIONS', options
             uri = "https://{0}/api/class/fabricNode.json".format(self.apic_address)
             uri += options
-            response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
             nodes = response['imdata']
             for node_dict in nodes:
                 node_mo_class = node_dict.keys()[0]
@@ -562,7 +572,7 @@ class Apic(Cmd):
 
         # Query l1PhysIf to buils self.idict
         uri = "https://{0}/api/class/l1PhysIf.json".format(self.apic_address)
-        response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         intfs = response['imdata']
         if intfs:
             for intf_dict in intfs:
@@ -581,7 +591,7 @@ class Apic(Cmd):
                                        'pod': pod_id, 'operSt': '', 'operSpeed': '', 'operDuplex': ''}
             # Query ethpmPhysIf and add status, speed and duplex to self.idict
             uri = "https://{0}/api/class/ethpmPhysIf.json".format(self.apic_address)
-            response = requests.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
             phy_intfs = response['imdata']
             for phy_intf_dict in phy_intfs:
                 phy_intf_mo_class = phy_intf_dict.keys()[0]
