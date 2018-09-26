@@ -8,7 +8,7 @@
 #                                                                              #
 ################################################################################
 #                                                                              #
-# Copyright 2016 Evolvere Technologies Ltd                                     #
+# Copyright 2017 Evolvere Technologies Ltd                                     #
 #                                                                              #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may   #
 #    not use this file except in compliance with the License. You may obtain   #
@@ -24,16 +24,11 @@
 #                                                                              #
 ################################################################################
 
-import cobra.mit.access
-import cobra.mit.session
-import cobra.mit.request
-import cobra.model.config
-import cobra.model.fabric
-import cobra.model.pol
 import requests
 import re
 import sys
 import datetime
+import json
 from requests.packages.urllib3.exceptions import InsecureRequestWarning, InsecurePlatformWarning, SNIMissingWarning
 from cmd import Cmd
 from operator import attrgetter
@@ -64,6 +59,8 @@ class Apic(Cmd):
         else:
             readline.parse_and_bind("tab: complete")
         self.can_connect = ''
+        self.cookie = None
+        self.headers = {'content-type': "application/json", 'cache-control': "no-cache"}
         self.fabric = []
         self.snapshots = []
         self.leafs = []
@@ -75,6 +72,8 @@ class Apic(Cmd):
         self.username = ''
         self.password = ''
         self.address = ''
+        self.session = requests.Session()
+        self.apic_address = ''
 
     def do_login(self, args):
         """Usage: login [FABRIC_NAME]"""
@@ -279,11 +278,15 @@ class Apic(Cmd):
         pass
 
     def connect(self):
+        apic_user = self.username
+        apic_password = self.password
+        apic_address = self.address
+        uri = "https://{0}/api/aaaLogin.json".format(apic_address)
+        payload = {'aaaUser': {'attributes': {'name': apic_user, 'pwd': apic_password}}}
+        response = self.session.post(uri, data=json.dumps(payload), headers=self.headers, verify=False)
+        self.cookie = {'APIC-cookie': response.cookies['APIC-cookie']}
+        self.apic_address = apic_address
 
-        self.ls = cobra.mit.session.LoginSession('https://' + self.address, self.username, self.password)
-        self.md = cobra.mit.access.MoDirectory(self.ls)
-        self.md.login()
-        # self.refresh_time_epoch = int(self.ls.refreshTime)
         self.refresh_time_epoch = int(datetime.datetime.now().strftime('%s'))
         self.collect_epgs()
         self.collect_leafs()
@@ -295,7 +298,6 @@ class Apic(Cmd):
             if current_time_epoch - self.refresh_time_epoch >= timeout:
                 self.connect()
             else:
-                self.md.login()
                 self.refresh_time_epoch = current_time_epoch
 
             return [0, ]
@@ -308,23 +310,25 @@ class Apic(Cmd):
 
     def disconnect(self):
         try:
-            self.md.logout()
+            self.session.close()
         except:
             pass
         apic.prompt = 'ACLI()>'
 
     def collect_epgs(self):
-        resp = self.md.lookupByClass('fvAEPg', '')
+        uri = 'https://{0}/api/class/fvAEPg.json?'.format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         self.epg_names = []
-        for epg in resp:
-            self.epg_names.append(str(epg.name))
+        for epg in response['imdata']:
+            self.epg_names.append(epg['fvAEPg']['attributes']['name'])
 
     def collect_leafs(self):
-        resp = self.md.lookupByClass('fabricNode', '')
+        uri = 'https://{0}/api/class/fabricNode.json?'.format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
         self.leafs = []
-        for node in resp:
-            if str(node.role) == 'leaf':
-                self.leafs.append(str(node.id))
+        for node in response['imdata']:
+            if node['fabricNode']['attributes']['role'] == 'leaf':
+                self.leafs.append(node['fabricNode']['attributes']['id'])
     
     def collect_snapshots(self):
 
@@ -334,8 +338,9 @@ class Apic(Cmd):
             return
 
         self.snapshots = []
-        snapshots_unsorted = self.md.lookupByClass('configSnapshot', '')
-        self.snapshots = sorted(snapshots_unsorted, key=attrgetter("createTime"), reverse=True)
+        uri = 'https://{0}/api/class/configSnapshot.json?'.format(self.apic_address)
+        self.snapshots = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()['imdata']
+
         return    
 
     def create_snapshot(self, description):
@@ -345,17 +350,16 @@ class Apic(Cmd):
         if result[0] == 1:
             return
 
-        pol_uni = cobra.model.pol.Uni('')
-        fabric_inst = cobra.model.fabric.Inst(pol_uni)
-        cobra.model.config.ExportP(fabric_inst, targetDn='', name='defaultOneTime', adminSt='triggered',
-                                   snapshot='true', descr=description)
-        c = cobra.mit.request.ConfigRequest()
-        c.addMo(fabric_inst)
-        try:
-            self.md.commit(c)
+        config_payload = {'configExportP': {'attributes' : {'name': 'defaultOneTime', 'adminSt': 'triggered',
+                                                            'snapshot': 'true', 'descr': description}}}
+        uri = 'https://{0}/api/node/mo/uni/fabric/configexp-defaultOneTime.json'.format(self.apic_address)
+
+        response = self.session.post(uri, data=json.dumps(config_payload), headers=self.headers, cookies=self.cookie,
+                                     verify=False)
+
+        if response.status_code == 200:
             return [0, ]
-        except:
-            pass
+        else:
             return [1, ]
 
     def update_snapshot_description(self, snapshot_id, description):
@@ -366,13 +370,16 @@ class Apic(Cmd):
             return
 
         snapshot = self.snapshots[int(snapshot_id)]
-        snapshot.descr = description
-        c = cobra.mit.request.ConfigRequest()
-        c.addMo(snapshot)
-        try:
-            self.md.commit(c)
+        snapshot_dn = snapshot['configSnapshot']['attributes']['dn']
+        uri = 'https://{0}/api/mo/{1}.json'.format(self.apic_address, snapshot_dn)
+
+        config_payload = {'configSnapshot': {'attributes': {'descr': description}}}
+
+        response = self.session.post(uri, data=json.dumps(config_payload), headers=self.headers, cookies=self.cookie,
+                                     verify=False)
+        if response.status_code == 200:
             return [0, ]
-        except:
+        else:
             return [1, ]
     
     def get_epg_data(self, epg):
@@ -380,100 +387,138 @@ class Apic(Cmd):
         result = self.refresh_connection()
 
         if result[0] == 1:
-            return
+           return
 
         self.epgs = []
         if epg:
             if epg == 'ALL':
-                resp = self.md.lookupByClass('fvAEPg', '', subtree='children')
+                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                                             '&rsp-subtree-class=fvRsPathAtt,fvRsBd,tagInst'.format(self.apic_address)
+
             else:
-                resp = self.md.lookupByClass('fvAEPg', '', propFilter='eq( fvAEPg.name, "{0}")'.format(epg),
-                                             subtree='children')
-            for epg in resp:
+                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                                             '&rsp-subtree-class=fvRsPathAtt,fvRsBd,tagInst'\
+                                             '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address,
+                                                                                                  epg)
+
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+
+            for epg in response['imdata']:
                 paths = []
                 tags = []
-                name = str(epg.name)
-                tn = str(epg.dn).split('/')[1].replace('tn-', '')
-                ap = str(epg.dn).split('/')[2].replace('ap-', '')
-                if epg.numChildren > 0:
-                    for child in epg.children:
-                        if 'RsPathAtt' in str(child.__class__):
-                            encap = str(child.encap).replace('vlan-', '')
-                            if 'protpaths' in str(child.tDn):
-                                protpaths = str(child.tDn).split('/')[2]
-                                vpc = str(child.tDn).split('/')[-1].split('[')[-1][:-1]
+                name = epg['fvAEPg']['attributes']['name']
+                tn = epg['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
+                ap = epg['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
+                if 'children' in epg['fvAEPg']:
+                    for child in epg['fvAEPg']['children']:
+                        if 'fvRsPathAtt' in child:
+                            encap = child['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
+                            t_dn = child['fvRsPathAtt']['attributes']['tDn']
+                            if 'protpaths' in t_dn:
+                                protpaths = t_dn.split('/')[2]
+                                vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
                                 path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
                                 paths.append(path_dict)
 
-                            elif 'paths' in str(child.tDn):
-                                intf_id = str(child.tDn).split('eth')[-1][:-1]
-                                node = str(child.tDn).split('/')[2].replace('paths-', '')
+                            elif 'paths' in t_dn:
+                                intf_id = t_dn.split('eth')[-1][:-1]
+                                node = t_dn.split('/')[2].replace('paths-', '')
                                 idx = int(node)*1000 + int(str(intf_id).split('/')[0])*100 +\
                                     int(str(intf_id).split('/')[-1])
                                 path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
                                 paths.append(path_dict)
 
-                        elif 'tag' in str(child.dn):
-                            tags.append(str(child.dn).split('/')[-1].replace('tag-', ''))
+                        elif 'tagInst' in child:
+                            tags.append(child['tagInst']['attributes']['name'])
 
-                        elif 'RsBd' in str(child.__class__):
-                            bd = str(child.tnFvBDName)
+                        elif 'fvRsBd' in child:
+                            bd = child['fvRsBd']['attributes']['tnFvBDName']
 
                 paths_sorted = sorted(paths, key=lambda k: k['idx'])
                 epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd, 'paths': paths_sorted, 'tags': tags}
                 self.epgs.append(epg_dict)
-    
+
     def get_interface_data(self, target_node=''):
+        # Initialize self.idict
+        self.idict = {}
 
-        result = self.refresh_connection()
+        # Populates self.idict:
+        #
+        # { "104146": {
+        #              "descr": "",
+        #              "intf_id": "1/46",
+        #              "node": "node-104",
+        #              "operDuplex": "full",
+        #              "operSpeed": "10G",
+        #              "operSt": "up",
+        #              "pod": "1",
+        #              "policy_group": "10G-ACCESS-EXISTING-LAB",
+        #              "portT": "leaf",
+        #              "port_sr_name": "Nutanix8",
+        #              "usage": "epg,infra"
+        #             },
+        # }
 
-        if result[0] == 1:
-            return
-
-        port_profiles = {}
         port_to_switch_prof_map = {}
-
-        resp = self.md.lookupByClass('infraRtAccPortP', 'uni/infra')
-        for item in resp:
-            sw_sel = str(item.tDn).split('/')[2].replace('nprof-', '')
-            int_sel = str(item.dn).split('/')[2].replace('accportprof-', '')
-
+        # format:
+        # {'UCS-103-104-FI-B-IFSELECTOR': ['SP-UCS-103-104-FI-B'],
+        #  'LF1_ACCESS': ['LF1_SPR']}
+        #
+        uri = "https://{0}/api/class/infraRtAccPortP.json".format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for mo in response['imdata']:
+            mo_class = mo.keys()[0]
+            sw_sel = mo[mo_class]['attributes']['tDn'].split('/')[2].replace('nprof-', '')
+            int_sel = mo[mo_class]['attributes']['dn'].split('/')[2].replace('accportprof-', '')
             port_to_switch_prof_map.setdefault(int_sel, []).append(sw_sel)
 
-        resp = self.md.lookupByClass('infraNodeBlk', 'uni/infra')
-
-        switch_prof_leaves = {}
-
-        for item in resp:
-
-            sw_sel = str(item.dn).split('/')[2].replace('nprof-', '')
-            for node in range(int(item.from_), int(item.to_) + 1):
-                switch_prof_leaves.setdefault(sw_sel, []).append(node)
-
-        resp = self.md.lookupByClass('infraHPortS', 'uni/infra', subtree='children')
+        switch_prof_leafs = {}
+        # format:
+        # {'SP-UCS-103-104-FI-B': [103, 104],
+        #  'LF1_SPR': [101]]
+        #
+        uri = "https://{0}/api/class/infraNodeBlk.json".format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for mo in response['imdata']:
+            mo_class = mo.keys()[0]
+            sw_sel = mo[mo_class]['attributes']['dn'].split('/')[2].replace('nprof-', '')
+            from_ = int(mo[mo_class]['attributes']['from_'])
+            to_ = int(mo[mo_class]['attributes']['to_']) + 1
+            for node in range(from_, to_):
+                switch_prof_leafs.setdefault(sw_sel, []).append(node)
 
         access_port_selectors = {}
+        # format:
+        # UCS-103-104-FI-B-IFSELECTOR': [{'interfaces': ['1/48'], 'policy_group': u'PG-UCS2-FI-B', 'hport_name': u'UCS-FI-B-PORT2'}],
+        #
+        uri = "https://{0}/api/class/infraHPortS.json".format(self.apic_address)
+        options = '?query-target=subtree'
+        uri += options
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for mo in response['imdata']:
+            mo_class = mo.keys()[0]
+            # Relies on ACI returning objects in PortBlk, RsAccBaseGrp, HPortS order
+            isl = mo[mo_class]['attributes']['dn'].split('/')[2].replace('accportprof-', '')
 
-        for item in resp:
+            if mo_class == 'infraPortBlk':
+                fromPort = int(mo[mo_class]['attributes']['fromPort'])
+                toPort = int(mo[mo_class]['attributes']['toPort']) + 1
+                interfaces = []
+                for intf in range(fromPort, toPort):
+                    intf_name = '1/' + str(intf)
+                    interfaces.append(intf_name)
 
-            isl = str(item.dn).split('/')[2].replace('accportprof-', '')
+            if mo_class == 'infraRsAccBaseGrp':
+                pol_grp = mo[mo_class]['attributes']['tDn'].split('-', 1)[-1]
 
-            hport_name = str(item.name)
-            interfaces = []
-            if item.numChildren > 0:
-                pol_grp = ''
-                for child in item.children:
+            if mo_class == 'infraHPortS':
+                hport_name = mo[mo_class]['attributes']['name']
+                access_port_selectors.setdefault(isl, []).append({'hport_name': hport_name, 'policy_group': pol_grp, 'interfaces': interfaces})
 
-                    if 'RsAccBaseGrp' in str(child.__class__):
-                        pol_grp = str(child.tDn).split('-', 1)[-1]
-                    elif 'PortBlk' in str(child.__class__):
-                        for intf in range(int(child.fromPort), int(child.toPort) + 1):
-                            intf_name = '1/' + str(intf)
-                            interfaces.append(intf_name)
-
-                access_port_selectors.setdefault(isl, []).append({'hport_name' : hport_name, 'policy_group': pol_grp,
-                                                'interfaces': interfaces})
-
+        port_profiles = {}
+        # Format:
+        # {104148: {'port_sr_name': u'UCS-FI-B-PORT2', 'policy_group': u'PG-UCS2-FI-B'},  }
+        #
         for port_selector in access_port_selectors:
             if port_selector in port_to_switch_prof_map:
                 for port_selector_item in access_port_selectors[port_selector]:
@@ -481,10 +526,9 @@ class Apic(Cmd):
                     port_sr_name = port_selector_item['hport_name']
                     nodes = []
                     for sw_sel in port_to_switch_prof_map[port_selector]:
-                        if sw_sel in switch_prof_leaves:
-                            for node in switch_prof_leaves[sw_sel]:
+                        if sw_sel in switch_prof_leafs:
+                            for node in switch_prof_leafs[sw_sel]:
                                 nodes.append(node)
-
                     if nodes:
                         for node in set(nodes):
                             for intf in set(port_selector_item['interfaces']):
@@ -494,45 +538,69 @@ class Apic(Cmd):
                                 hport_dict['port_sr_name'] = port_sr_name
                                 port_profiles[key] = hport_dict
 
-        pods = self.md.lookupByClass('fabricPod', parentDn='topology')
         leaf_nodes = []
-        for pod in pods:
+        # format:
+        # [101, 102, 103, 104]
+        #
+        uri = "https://{0}/api/class/fabricPod.json".format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        pods = response['imdata']
+        for pod_dict in pods:
+            pod_mo_class = pod_dict.keys()[0]
+            pod = pod_dict[pod_mo_class]['attributes']
             if target_node:
-                nodes = self.md.lookupByClass('fabricNode', propFilter='eq(fabricNode.id, "{0}")'.format(target_node),
-                                              parentDn=pod.dn)
+                options = '?query-target-filter=eq(fabricNode.id,"{0}")'.format(target_node)
             else:
-                nodes = self.md.lookupByClass('fabricNode', parentDn=pod.dn)
-            for node in nodes:
-                if node.role == 'leaf':
-                    leaf_nodes.append(node.rn)
-            
-            intfs = self.md.lookupByClass('l1PhysIf', parentDn='')
-            if intfs:
-                for intf in intfs:
-                    node = str(intf.dn).split('/')[2]
-                    if node in leaf_nodes:
-                        intf_id = str(intf.id).strip('eth')
-                        idx = int(str(node).split('-')[-1])*1000 + int(intf_id.split('/')[0])*100 +\
-                            int(intf_id.split('/')[-1])
-                        self.idict[idx] = {'node': str(node), 'intf_id': intf_id, 'portT': str(intf.portT),
-                                           'usage': str(intf.usage), 'descr': str(intf.descr), 'operSt': '',
-                                           'operSpeed': '', 'operDuplex': ''}
+                options = ''
+            uri = "https://{0}/api/class/fabricNode.json".format(self.apic_address)
+            uri += options
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            nodes = response['imdata']
+            for node_dict in nodes:
+                node_mo_class = node_dict.keys()[0]
+                node = node_dict[node_mo_class]['attributes']
+                if node['role'] == 'leaf' and pod['dn'] in node['dn']:
+                    node_rn = 'node-' + node['id']
+                    leaf_nodes.append(node_rn)
 
-                phy_intfs = self.md.lookupByClass('ethpmPhysIf', parentDn='')
-                 
-                for phy_intf in phy_intfs:
-                    node = str(phy_intf.dn).split('/')[2]
-                    if node in leaf_nodes:
-                        match = re.search('\[(eth\d+/\d+)\]', str(phy_intf.dn))
-                        if match:
-                            phy_intf_id = match.group(1).strip('eth')
-                            search_idx = int(str(node).split('-')[-1])*1000 + int(phy_intf_id.split('/')[0])*100 +\
-                                int(phy_intf_id.split('/')[-1])
-                            if search_idx in self.idict:
-                                self.idict[search_idx]['operSt'] = str(phy_intf.operSt)
-                                self.idict[search_idx]['operSpeed'] = str(phy_intf.operSpeed)
-                                self.idict[search_idx]['operDuplex'] = str(phy_intf.operDuplex)
-    
+        # Query l1PhysIf to buils self.idict
+        uri = "https://{0}/api/class/l1PhysIf.json".format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        intfs = response['imdata']
+        if intfs:
+            for intf_dict in intfs:
+                intf_mo_class = intf_dict.keys()[0]
+                intf = intf_dict[intf_mo_class]['attributes']
+                node = intf['dn'].split('/')[2]
+                pod_id = intf['dn'].split('/')[1].replace('pod-', '')
+                if node in leaf_nodes:
+                    node_id = node.replace('node-', '')
+                    intf_id =  intf['id'].strip('eth')
+                    portT = intf['portT']
+                    usage = intf['usage']
+                    descr = intf['descr']
+                    idx = int(node.split('-')[-1])*1000 + int(intf_id.split('/')[0])*100 + int(intf_id.split('/')[-1])
+                    self.idict[idx] = {'node': node_id, 'intf_id': intf_id, 'portT': portT, 'usage': usage, 'descr': descr,
+                                       'pod': pod_id, 'operSt': '', 'operSpeed': '', 'operDuplex': ''}
+            # Query ethpmPhysIf and add status, speed and duplex to self.idict
+            uri = "https://{0}/api/class/ethpmPhysIf.json".format(self.apic_address)
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            phy_intfs = response['imdata']
+            for phy_intf_dict in phy_intfs:
+                phy_intf_mo_class = phy_intf_dict.keys()[0]
+                phy_intf = phy_intf_dict[phy_intf_mo_class]['attributes']
+                node = phy_intf['dn'].split('/')[2]
+                if node in leaf_nodes:
+                    match = re.search('\[(eth\d+/\d+)\]', phy_intf['dn'])
+                    if match:
+                        phy_intf_id = match.group(1).strip('eth')
+                        search_idx = int(node.split('-')[-1])*1000 + int(phy_intf_id.split('/')[0])*100 + int(phy_intf_id.split('/')[-1])
+                        if search_idx in self.idict:
+                            self.idict[search_idx]['operSt'] = phy_intf['operSt']
+                            self.idict[search_idx]['operSpeed'] = phy_intf['operSpeed']
+                            self.idict[search_idx]['operDuplex'] = phy_intf['operDuplex']
+
+        # Match idx in self.idict and port_profiles to add port_sr_name and policy_group
         for key in self.idict:
             if key in port_profiles:
                 self.idict[key]['port_sr_name'] = port_profiles[key]['port_sr_name']
@@ -549,19 +617,20 @@ class Apic(Cmd):
             return
 
         self.vlan_pools = []
-        resp = self.md.lookupByClass('fvnsVlanInstP', '', subtree='children')
-        for inst in resp:
-            name = str(inst.name)
-            alloc = str(inst.allocMode)
+        uri = 'https://{0}/api/class/fvnsVlanInstP.json?rsp-subtree=children'.format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for inst in response['imdata']:
+            name = inst['fvnsVlanInstP']['attributes']['name']
+            alloc = inst['fvnsVlanInstP']['attributes']['allocMode']
             domains = []
-            if inst.numChildren > 0:
-                for child in inst.children:
-                    if 'RtVlanNs' in str(child.__class__):
-                        domains.append(str(child.tDn).split('uni/')[1])
-                for child in inst.children:
-                    if 'EncapBlk' in str(child.__class__):
-                        from_vlan = int(str(child.dn).split('from-[')[1].split(']')[0].replace('vlan-', ''))
-                        to_vlan = int(str(child.to).replace('vlan-', ''))
+            if 'children' in inst['fvnsVlanInstP']:
+                for child in inst['fvnsVlanInstP']['children']:
+                    if 'fvnsRtVlanNs' in child:
+                        domains.append(child['fvnsRtVlanNs']['attributes']['tDn'].split('uni/')[1])
+                for child in inst['fvnsVlanInstP']['children']:
+                    if 'fvnsEncapBlk' in child:
+                        from_vlan = int(child['fvnsEncapBlk']['attributes']['from'].replace('vlan-', ''))
+                        to_vlan = int(child['fvnsEncapBlk']['attributes']['to'].replace('vlan-', ''))
                         self.vlan_pools.append({'name': name, 'alloc': alloc, 'domains': domains,
                                                 'from_vlan': from_vlan, 'to_vlan': to_vlan})
  
@@ -749,7 +818,7 @@ class Apic(Cmd):
 
         for snapshot in self.snapshots:
             trigger = ''
-            dn = str(snapshot.dn)
+            dn = snapshot['configSnapshot']['attributes']['dn']
             if 'OneTime' in dn:
                 trigger = 'OneTime'
             elif 'DailyAuto' in dn:
@@ -757,8 +826,8 @@ class Apic(Cmd):
             elif 'defaultAuto' in dn:
                 trigger = 'defaultAuto'
 
-            snapshot_time = str(snapshot.createTime)
-            descr = str(snapshot.descr)
+            snapshot_time = snapshot['configSnapshot']['attributes']['createTime']
+            descr = snapshot['configSnapshot']['attributes']['descr']
             y.add_row([snapshot_id, trigger, snapshot_time, descr])
             snapshot_id += 1
 
@@ -776,4 +845,3 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print "\nINFO: ACLI Shell was interrupted by Ctrl-C"
         apic.disconnect()
-
