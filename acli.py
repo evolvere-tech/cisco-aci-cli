@@ -8,7 +8,7 @@
 #                                                                              #
 ################################################################################
 #                                                                              #
-# Copyright 2017 Evolvere Technologies Ltd                                     #
+# Copyright 2019 Evolvere Technologies Ltd                                     #
 #                                                                              #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may   #
 #    not use this file except in compliance with the License. You may obtain   #
@@ -35,7 +35,6 @@ from operator import attrgetter
 from getpass import getpass
 from prettytable import PrettyTable
 
-
 try:
     from settings.aci_settings import FABRICS
 except:
@@ -47,7 +46,6 @@ SHOW_VLAN_CMDS = ['pools', '<vlan_id>']
 SHOW_INTF_CMDS = ['<node>', ]
 CONFIG_CMDS = ['snapshot', ]
 CONFIG_SNAPSHOT = ['<snapshot_id>', 'new']
-
 
 class Apic(Cmd):
     def __init__(self):
@@ -182,8 +180,16 @@ class Apic(Cmd):
                         self.get_interface_data(parameters[1])
                         self.get_epg_data(epg='ALL')
                         try:
-                            idx = int(parameters[1]) * 1000 + int(parameters[2].split('/')[0]) * 100 + \
-                                  int(parameters[2].split('/')[-1])
+                            node = parameters[1]
+                            port = parameters[2]
+                            idx = 0
+                            if len(port.split('/')) == 3:
+                                idx = int(node) * 1000000 + int(port.split('/')[0]) * 1000 + \
+                                      int(port.split('/')[1]) * 100 + int(port.split('/')[2])
+
+                            elif len(port.split('/')) == 2:
+                                idx = int(node) * 1000000 + int(0) * 1000 + \
+                                      int(port.split('/')[0]) * 100 + int(port.split('/')[1])
 
                             if idx in self.idict:
                                 self.print_interface_details(idx)
@@ -273,6 +279,13 @@ class Apic(Cmd):
         print "Leaving ACLI."
         self.disconnect()
         raise SystemExit
+
+    def do_exit(self, args):
+        """Quits the program."""
+        print "Leaving ACLI."
+        self.disconnect()
+        raise SystemExit
+
 
     def emptyline(self):
         pass
@@ -414,29 +427,54 @@ class Apic(Cmd):
                         if 'fvRsPathAtt' in child:
                             encap = child['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
                             t_dn = child['fvRsPathAtt']['attributes']['tDn']
+                            match = re.findall('\[.*\]', t_dn)
+                            pathep = match[0].strip('[]')
+
                             if 'protpaths' in t_dn:
                                 protpaths = t_dn.split('/')[2]
                                 vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
                                 path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
                                 paths.append(path_dict)
 
-                            elif 'paths' in t_dn:
-                                intf_id = t_dn.split('eth')[-1][:-1]
-                                node = t_dn.split('/')[2].replace('paths-', '')
-                                idx = int(node)*1000 + int(str(intf_id).split('/')[0])*100 +\
-                                    int(str(intf_id).split('/')[-1])
-                                path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
-                                paths.append(path_dict)
+                            elif '/paths' in t_dn:
+
+                                if 'eth' in pathep and not 'extpaths-' in t_dn:
+                                    intf_id = pathep.replace('eth', '')
+                                    node = t_dn.split('/')[2].replace('paths-', '')
+                                    fex = 0
+                                    idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+                                        int(str(intf_id).split('/')[-1])
+                                    path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
+                                    paths.append(path_dict)
+
+                                elif 'eth' in pathep and 'extpaths-' in t_dn:
+                                    intf_id = pathep.replace('eth', '')
+                                    node = t_dn.split('/')[2].replace('paths-', '')
+                                    fex = t_dn.split('/')[3].replace('extpaths-', '')
+                                    idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+                                        int(str(intf_id).split('/')[-1])
+                                    path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
+                                    paths.append(path_dict)
+
+                                elif not 'eth' in pathep:
+                                    policy_grp = pathep
+                                    node = t_dn.split('/')[2].replace('paths-', '')
+                                    path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
+                                    paths.append(path_dict)
 
                         elif 'tagInst' in child:
                             tags.append(child['tagInst']['attributes']['name'])
 
                         elif 'fvRsBd' in child:
-                            bd = child['fvRsBd']['attributes']['tnFvBDName']
+                            t_dn = child['fvRsBd']['attributes']['tDn']
+                            bd_tn = t_dn.split('/')[1].replace('tn-', '')
+                            bd = t_dn.split('/')[2].replace('BD=', '')
+                            bd_full = bd_tn + '/' + bd
 
                 paths_sorted = sorted(paths, key=lambda k: k['idx'])
-                epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd, 'paths': paths_sorted, 'tags': tags}
+                epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'paths': paths_sorted, 'tags': tags}
                 self.epgs.append(epg_dict)
+                
 
     def get_interface_data(self, target_node=''):
         # Initialize self.idict
@@ -472,6 +510,20 @@ class Apic(Cmd):
             int_sel = mo[mo_class]['attributes']['dn'].split('/')[2].replace('accportprof-', '')
             port_to_switch_prof_map.setdefault(int_sel, []).append(sw_sel)
 
+        fex_to_interface_profile_map = {}
+        uri = "https://{0}/api/node/class/infraFexBndlGrp.json".format(self.apic_address)
+        subtree = 'children'
+        subtreeClassFilter = 'infraRtAccBaseGrp'
+        options = '?rsp-subtree={0}&rsp-subtree-class={1}'.format(subtree, subtreeClassFilter)
+        uri += options
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        if response['imdata']:
+            for item in response['imdata']:
+                if 'children' in item['infraFexBndlGrp']:
+                    fex_profile = item['infraFexBndlGrp']['attributes']['name']
+                    rt_base_group = item['infraFexBndlGrp']['children'][0]['infraRtAccBaseGrp']['attributes']
+                    interface_profile = rt_base_group['tDn'].split('/')[2].replace('accportprof-', '')
+                    fex_to_interface_profile_map[fex_profile] = interface_profile
         switch_prof_leafs = {}
         # format:
         # {'SP-UCS-103-104-FI-B': [103, 104],
@@ -498,7 +550,12 @@ class Apic(Cmd):
         for mo in response['imdata']:
             mo_class = mo.keys()[0]
             # Relies on ACI returning objects in PortBlk, RsAccBaseGrp, HPortS order
-            isl = mo[mo_class]['attributes']['dn'].split('/')[2].replace('accportprof-', '')
+            if 'accportprof-' in mo[mo_class]['attributes']['dn']:
+                isl = mo[mo_class]['attributes']['dn'].split('/')[2].replace('accportprof-', '')
+            elif 'fexprof-' in mo[mo_class]['attributes']['dn']:
+                fex_prof = mo[mo_class]['attributes']['dn'].split('/')[2].replace('fexprof-', '')
+                if fex_prof in fex_to_interface_profile_map:
+                    isl = fex_to_interface_profile_map[fex_prof]
 
             if mo_class == 'infraPortBlk':
                 fromPort = int(mo[mo_class]['attributes']['fromPort'])
@@ -509,11 +566,18 @@ class Apic(Cmd):
                     interfaces.append(intf_name)
 
             if mo_class == 'infraRsAccBaseGrp':
-                pol_grp = mo[mo_class]['attributes']['tDn'].split('-', 1)[-1]
+                if 'fexbundle' in mo[mo_class]['attributes']['tDn']:
+                    pol_grp = mo[mo_class]['attributes']['tDn'].split('/')[3].replace('fexbundle-', '')
+                else:
+                    pol_grp = mo[mo_class]['attributes']['tDn'].split('-', 1)[-1]
+                if 'fexprof-' in mo[mo_class]['attributes']['dn']:
+                    fex = mo[mo_class]['attributes']['fexId']
+                else:
+                    fex = '0'
 
             if mo_class == 'infraHPortS':
                 hport_name = mo[mo_class]['attributes']['name']
-                access_port_selectors.setdefault(isl, []).append({'hport_name': hport_name, 'policy_group': pol_grp, 'interfaces': interfaces})
+                access_port_selectors.setdefault(isl, []).append({'fex': fex, 'hport_name': hport_name, 'policy_group': pol_grp, 'interfaces': interfaces})
 
         port_profiles = {}
         # Format:
@@ -524,6 +588,7 @@ class Apic(Cmd):
                 for port_selector_item in access_port_selectors[port_selector]:
                     policy_group = port_selector_item['policy_group']
                     port_sr_name = port_selector_item['hport_name']
+                    fex = port_selector_item['fex']
                     nodes = []
                     for sw_sel in port_to_switch_prof_map[port_selector]:
                         if sw_sel in switch_prof_leafs:
@@ -533,7 +598,7 @@ class Apic(Cmd):
                         for node in set(nodes):
                             for intf in set(port_selector_item['interfaces']):
                                 hport_dict = {}
-                                key = int(node)*1000 + int(intf.split('/')[0])*100 + int(intf.split('/')[-1])
+                                key = int(node)*1000000 + int(fex)*1000 + int(intf.split('/')[0])*100 + int(intf.split('/')[-1])
                                 hport_dict['policy_group'] = policy_group
                                 hport_dict['port_sr_name'] = port_sr_name
                                 port_profiles[key] = hport_dict
@@ -579,7 +644,15 @@ class Apic(Cmd):
                     portT = intf['portT']
                     usage = intf['usage']
                     descr = intf['descr']
-                    idx = int(node.split('-')[-1])*1000 + int(intf_id.split('/')[0])*100 + int(intf_id.split('/')[-1])
+                    if len(intf_id.split('/')) == 3:
+                        fex = intf_id.split('/')[0]
+                        module = intf_id.split('/')[1]
+                        port = intf_id.split('/')[2]
+                    elif len(intf_id.split('/')) == 2:
+                        fex = '0'
+                        module = intf_id.split('/')[0]
+                        port = intf_id.split('/')[1]
+                    idx = int(node.split('-')[-1])*1000000 + int(fex)*1000 + int(module)*100 + int(port)
                     self.idict[idx] = {'node': node_id, 'intf_id': intf_id, 'portT': portT, 'usage': usage, 'descr': descr,
                                        'pod': pod_id, 'operSt': '', 'operSpeed': '', 'operDuplex': ''}
             # Query ethpmPhysIf and add status, speed and duplex to self.idict
@@ -591,10 +664,20 @@ class Apic(Cmd):
                 phy_intf = phy_intf_dict[phy_intf_mo_class]['attributes']
                 node = phy_intf['dn'].split('/')[2]
                 if node in leaf_nodes:
-                    match = re.search('\[(eth\d+/\d+)\]', phy_intf['dn'])
+                    pod = phy_intf['dn'].split('/')[1].replace('pod-', '')
+                    node = phy_intf['dn'].split('/')[2].replace('node-', '')
+                    match = re.findall('\[eth.*\]', phy_intf['dn'])
                     if match:
-                        phy_intf_id = match.group(1).strip('eth')
-                        search_idx = int(node.split('-')[-1])*1000 + int(phy_intf_id.split('/')[0])*100 + int(phy_intf_id.split('/')[-1])
+                        intf_id = match[0].strip('[eth]')
+                        if len(intf_id.split('/')) == 3:
+                            fex = intf_id.split('/')[0]
+                            module = intf_id.split('/')[1]
+                            port = intf_id.split('/')[2]
+                        elif len(intf_id.split('/')) == 2:
+                            fex = '0'
+                            module = intf_id.split('/')[0]
+                            port = intf_id.split('/')[1]
+                        search_idx = int(node.split('-')[-1])*1000000 + int(fex)*1000 + int(module)*100 + int(port)
                         if search_idx in self.idict:
                             self.idict[search_idx]['operSt'] = phy_intf['operSt']
                             self.idict[search_idx]['operSpeed'] = phy_intf['operSpeed']
@@ -608,7 +691,7 @@ class Apic(Cmd):
             else:
                 self.idict[key]['port_sr_name'] = ''
                 self.idict[key]['policy_group'] = ''
-   
+
     def get_vlan_pool(self):
 
         result = self.refresh_connection()
@@ -696,8 +779,8 @@ class Apic(Cmd):
             for path in epg['paths']:
                 if 'vpc' in path:
                     for idx in self.idict:
-                        if (path['vpc'] == self.idict[idx]['policy_group']) and (str(idx)[:3] in path['protpaths']):
-                            node = self.idict[idx]['node'].replace('node-', '')
+                        if (path['vpc'] == self.idict[idx]['policy_group']) and (self.idict[idx]['node'] in path['protpaths']):
+                            node = self.idict[idx]['node']
                             intf_id = self.idict[idx]['intf_id']
                             port_t = self.idict[idx]['portT']
                             usage = self.idict[idx]['usage']
@@ -708,6 +791,22 @@ class Apic(Cmd):
                             vlan = path['encap']
                             y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
                                        policy_group])
+
+                elif 'pc' in path:
+                    for idx in self.idict:
+                        if (path['pc'] == self.idict[idx]['policy_group']) and (self.idict['node'] == path['node']):
+                            node = self.idict[idx]['node']
+                            intf_id = self.idict[idx]['intf_id']
+                            port_t = self.idict[idx]['portT']
+                            usage = self.idict[idx]['usage']
+                            oper_st = self.idict[idx]['operSt']
+                            oper_speed = self.idict[idx]['operSpeed']
+                            port_sr_name = self.idict[idx]['port_sr_name']
+                            policy_group = self.idict[idx]['policy_group']
+                            vlan = path['encap']
+                            y.add_row([node, intf_id, vlan, port_t, usage, oper_st, oper_speed, port_sr_name,
+                                       policy_group])
+
 
                 elif path['idx'] in self.idict:
                     key = path['idx']
