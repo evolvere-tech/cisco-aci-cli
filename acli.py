@@ -931,7 +931,6 @@ class Apic(Cmd):
             snapshot_id += 1
 
         print(y)
-
  
 if __name__ == '__main__':
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)

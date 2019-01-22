@@ -66,7 +66,7 @@ Configuration command to create a new one time snapshot with description or add/
 
 # License
 
-Copyright 2016 Evolvere Technologies Ltd.
+Copyright 2019 Evolvere Technologies Ltd.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
