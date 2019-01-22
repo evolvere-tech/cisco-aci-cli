@@ -102,11 +102,16 @@ class Apic(Cmd):
 
                     self.address = apic_credentials['address']
                     try:
-                        self.connect()
-                        self.can_connect = parameters[0]
-                        print 'Established connection to APIC in', self.can_connect
-                        self.prompt = 'ACLI({})>'.format(self.can_connect)
-                        break
+                        result = self.connect()
+                        if result['rc'] == 0:
+                            self.can_connect = parameters[0]
+                            print 'Established connection to APIC in', self.can_connect
+                            self.prompt = 'ACLI({})>'.format(self.can_connect)
+                            break
+                        else:
+                            print 'ERROR:', result['error_msg']
+                            continue
+
                     except Exception as error:
                         print 'ERROR', str(error)
                         pass
@@ -291,19 +296,27 @@ class Apic(Cmd):
         pass
 
     def connect(self):
+        self.can_connect = ''
+        error_msg = ''
         apic_user = self.username
         apic_password = self.password
         apic_address = self.address
         uri = "https://{0}/api/aaaLogin.json".format(apic_address)
         payload = {'aaaUser': {'attributes': {'name': apic_user, 'pwd': apic_password}}}
         response = self.session.post(uri, data=json.dumps(payload), headers=self.headers, verify=False)
-        self.cookie = {'APIC-cookie': response.cookies['APIC-cookie']}
-        self.apic_address = apic_address
+        if response.status_code == 200:
+            self.cookie = {'APIC-cookie': response.cookies['APIC-cookie']}
+            self.apic_address = apic_address
 
-        self.refresh_time_epoch = int(datetime.datetime.now().strftime('%s'))
-        self.collect_epgs()
-        self.collect_leafs()
-
+            self.refresh_time_epoch = int(datetime.datetime.now().strftime('%s'))
+            self.collect_epgs()
+            self.collect_leafs()
+            
+            return {'rc': 0, 'error_msg': error_msg}
+        else:
+            error_msg = 'failed to connect to APIC {0}, Error Code {1}'.format(self.address, response.status_code)
+            return {'rc': 1, 'error_msg': error_msg}
+        
     def refresh_connection(self, timeout=90):
         try:
             current_time_epoch = int(datetime.datetime.now().strftime('%s'))
