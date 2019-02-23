@@ -480,9 +480,13 @@ class Apic(Cmd):
 
                         elif 'fvRsBd' in child:
                             t_dn = child['fvRsBd']['attributes']['tDn']
-                            bd_tn = t_dn.split('/')[1].replace('tn-', '')
-                            bd = t_dn.split('/')[2].replace('BD=', '')
-                            bd_full = bd_tn + '/' + bd
+                            if t_dn:
+                                bd_tn = t_dn.split('/')[1].replace('tn-', '')
+                                bd = t_dn.split('/')[2].replace('BD-', '')
+                                bd_full = bd_tn + '/' + bd
+                            else:
+                                bd_tn = ''
+                                bd_full = child['fvRsBd']['attributes']['tnFvBDName']
 
                 paths_sorted = sorted(paths, key=lambda k: k['idx'])
                 epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'paths': paths_sorted, 'tags': tags}
