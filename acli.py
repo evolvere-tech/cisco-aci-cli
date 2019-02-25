@@ -811,7 +811,7 @@ class Apic(Cmd):
 
                 elif 'pc' in path:
                     for idx in self.idict:
-                        if (path['pc'] == self.idict[idx]['policy_group']) and (self.idict['node'] == path['node']):
+                        if (path['pc'] == self.idict[idx]['policy_group']) and (self.idict[idx]['node'] == path['node']):
                             node = self.idict[idx]['node']
                             intf_id = self.idict[idx]['intf_id']
                             port_t = self.idict[idx]['portT']
