@@ -901,7 +901,10 @@ class Apic(Cmd):
                     if (path['vpc'] == self.idict[key]['policy_group']) and (str(key)[:3] in path['protpaths']):
                         vlan = path['encap']
                         y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
-
+                elif 'pc' in path:
+                    if (path['pc'] == self.idict[key]['policy_group']):
+                        vlan = path['encap']
+                        y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
                 elif path['idx'] == key:
                     vlan = path['encap']
                     y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
