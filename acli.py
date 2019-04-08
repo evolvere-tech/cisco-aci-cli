@@ -24,6 +24,7 @@
 #                                                                              #
 ################################################################################
 
+import pprint
 import requests
 import re
 import sys
@@ -31,7 +32,7 @@ import datetime
 import json
 from requests.packages.urllib3.exceptions import InsecureRequestWarning, InsecurePlatformWarning, SNIMissingWarning
 from cmd import Cmd
-from operator import attrgetter
+from operator import attrgetter, itemgetter
 from getpass import getpass
 from prettytable import PrettyTable
 
@@ -40,7 +41,7 @@ try:
 except:
     sys.exit('ERROR: Missing or incorrect aci_settings.py file.')
 
-SHOW_CMDS = ['epg', 'interface', 'vlan', 'snapshot']
+SHOW_CMDS = ['epg', 'interface', 'vlan', 'snapshot', 'ipg']
 SHOW_EPG_CMDS = ['NAME', 'all|ALL']
 SHOW_VLAN_CMDS = ['pools', '<vlan_id>']
 SHOW_INTF_CMDS = ['<node>', ]
@@ -157,7 +158,7 @@ class Apic(Cmd):
         Usage:
         show epg [<epg_name>]
         show interface [<node>] [<leaf_interface, i.e. 1/10>]
-        show vlan <vlan_id> | pool
+        show vlan <vlan_id> | pools
         show snapshot
         """
         if self.can_connect:
@@ -179,10 +180,11 @@ class Apic(Cmd):
                 parameters = args.split()
                 if len(parameters) >= 2:
                     if (len(parameters) == 2) and (parameters[1] in self.leafs):
-                        self.get_interface_data(parameters[1])
-                        self.print_interface()
+                        self.get_interface_data()
+                        self.print_interface(parameters[1])
                     elif (len(parameters) == 3) and (parameters[1] in self.leafs):
-                        self.get_interface_data(parameters[1])
+                        if not self.idict:
+                            self.get_interface_data()
                         self.get_epg_data(epg='ALL')
                         try:
                             node = parameters[1]
@@ -212,7 +214,7 @@ class Apic(Cmd):
                 self.print_snapshot()
             elif 'vlan' in args:
                 parameters = args.split()
-                if len(parameters) == 2 and 'pool' not in parameters[1]:
+                if len(parameters) == 2 and 'pools' not in parameters[1]:
                     try:
                        vlan_id = int(parameters[1])
                        if (vlan_id >= 1) and (vlan_id <= 4096):
@@ -228,6 +230,19 @@ class Apic(Cmd):
                     self.print_vlan_pool()
                 else:
                     print 'Usage: show vlan pools or show vlan [VLAN]'
+            elif 'ipg' in args:
+                parameters = args.split()
+                if len(parameters) == 1:
+                    self.get_ipg_data()
+                    self.print_ipgs()
+                elif len(parameters) == 2:
+                    if parameters[1] in self.ipg_names:
+                        if not self.idict:
+                            self.get_interface_data()
+
+                        self.get_ipg_data()
+                        self.print_ipg_details(parameters[1])
+              
         else:
             print 'Login to a Fabric'
         return
@@ -253,6 +268,12 @@ class Apic(Cmd):
                 return [i for i in SHOW_CMDS if i.startswith(text)]
             else:
                 return SHOW_CMDS
+
+        if begidx == 9 and 'ipg' in line:
+            if text:
+                return [i for i in self.ipg_names if i.startswith(text)]
+            else:
+                return self.ipg_names
 
         if begidx == 9 and 'epg' in line:
             if text:
@@ -311,6 +332,7 @@ class Apic(Cmd):
             self.refresh_time_epoch = int(datetime.datetime.now().strftime('%s'))
             self.collect_epgs()
             self.collect_leafs()
+            self.collect_ipgs()
             
             return {'rc': 0, 'error_msg': error_msg}
         else:
@@ -355,7 +377,18 @@ class Apic(Cmd):
         for node in response['imdata']:
             if node['fabricNode']['attributes']['role'] == 'leaf':
                 self.leafs.append(node['fabricNode']['attributes']['id'])
-    
+
+        uri = "https://{0}/api/class/infraNodeBlk.json".format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for mo in response['imdata']:
+            mo_class = mo.keys()[0]
+            sw_sel = mo[mo_class]['attributes']['dn'].split('/')[2].replace('nprof-', '')
+            from_ = int(mo[mo_class]['attributes']['from_'])
+            to_ = int(mo[mo_class]['attributes']['to_']) + 1
+            for node in range(from_, to_):
+                if str(node) not in self.leafs:
+                    self.leafs.append(str(node))
+ 
     def collect_snapshots(self):
 
         result = self.refresh_connection()
@@ -367,7 +400,23 @@ class Apic(Cmd):
         uri = 'https://{0}/api/class/configSnapshot.json?'.format(self.apic_address)
         self.snapshots = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()['imdata']
 
+        self.snapshots.sort(key=lambda k: k['configSnapshot']['attributes']['createTime'])
+
         return    
+
+    def collect_ipgs(self):
+        self.ipg_names = []
+        uri = 'https://{0}/api/class/infraAccPortGrp.json'.format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for ipg in response['imdata']:
+            self.ipg_names.append(str(ipg['infraAccPortGrp']['attributes']['name']))
+
+        uri = 'https://{0}/api/class/infraAccBndlGrp.json'.format(self.apic_address)
+        response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+        for ipg in response['imdata']:
+            self.ipg_names.append(str(ipg['infraAccBndlGrp']['attributes']['name']))
+        
+        self.ipg_names.sort()
 
     def create_snapshot(self, description):
 
@@ -419,19 +468,19 @@ class Apic(Cmd):
         if epg:
             if epg == 'ALL':
                 uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                                             '&rsp-subtree-class=fvRsPathAtt,fvRsBd,tagInst'.format(self.apic_address)
+                      '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'.format(self.apic_address)
 
             else:
                 uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                                             '&rsp-subtree-class=fvRsPathAtt,fvRsBd,tagInst'\
-                                             '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address,
-                                                                                                  epg)
+                      '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'\
+                      '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address, epg)
 
             response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
 
             for epg in response['imdata']:
                 paths = []
                 tags = []
+                domains = []
                 name = epg['fvAEPg']['attributes']['name']
                 tn = epg['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
                 ap = epg['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
@@ -487,13 +536,118 @@ class Apic(Cmd):
                             else:
                                 bd_tn = ''
                                 bd_full = child['fvRsBd']['attributes']['tnFvBDName']
+                        elif 'fvRsDomAtt' in child:
+                            domains.append(str(child['fvRsDomAtt']['attributes']['tDn'].split('/')[1])) 
 
                 paths_sorted = sorted(paths, key=lambda k: k['idx'])
-                epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'paths': paths_sorted, 'tags': tags}
+                epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'domains': domains, 'paths': paths_sorted, 'tags': tags}
                 self.epgs.append(epg_dict)
+
+    def get_ipg_data(self):
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
+           return
+    
+        self.ipgs = {}
+
+        for ipg_type in ('interface', 'pc_vpc'):
+            if ipg_type == 'interface':
+                uri = 'https://{0}/api/class/infraAccPortGrp.json?rsp-subtree=children'.format(self.apic_address)
+            elif ipg_type == 'pc_vpc':
+                uri = 'https://{0}/api/class/infraAccBndlGrp.json?rsp-subtree=children'.format(self.apic_address)
+
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            for ipg in response['imdata']:
+                ipg_dict = {}
+
+                if ipg_type == 'interface':
+                    name = str(ipg['infraAccPortGrp']['attributes']['name'])
+                    link_agg = '-'
+                else:
+                    name = str(ipg['infraAccBndlGrp']['attributes']['name'])
+                    lag_t = ipg['infraAccBndlGrp']['attributes']['lagT']
+                    if lag_t == 'link':
+                       link_agg = 'pc'
+                    elif lag_t == 'node':
+                       link_agg = 'vpc'
+
+                ipg_dict['link_agg'] = link_agg
                 
+                children = []               
+                if ipg_type == 'interface':
+     
+                    if 'children' in ipg['infraAccPortGrp'] and ipg['infraAccPortGrp']['children']:
+                        children = ipg['infraAccPortGrp']['children']
+                else:
+                    if 'children' in ipg['infraAccBndlGrp'] and ipg['infraAccBndlGrp']['children']:
+                        children = ipg['infraAccBndlGrp']['children']
+
+                if children:
+
+                    for child in children:
+                        if 'infraRsAttEntP' in child:
+                            if 'tDn' in child['infraRsAttEntP']['attributes']:
+                                ipg_dict['aep'] = child['infraRsAttEntP']['attributes']['tDn'].split('/')[-1].replace('attentp-', '')
+                            
+                        if 'infraRsHIfPol' in child:
+                            link_level = '-'
+                            if child['infraRsHIfPol']['attributes']['tnFabricHIfPolName']:
+                                link_level = child['infraRsHIfPol']['attributes']['tnFabricHIfPolName']
+                            ipg_dict['link_level'] = link_level
+
+                        if 'infraRsStpIfPol' in child:
+                            stp = '-'
+                            if child['infraRsStpIfPol']['attributes']['tnStpIfPolName']:
+                                stp = child['infraRsStpIfPol']['attributes']['tnStpIfPolName']
+                            ipg_dict['stp'] = stp
+
+                        if 'infraRsMcpIfPol' in child:
+                            mcp = '-'
+                            if child['infraRsMcpIfPol']['attributes']['tnMcpIfPolName']:
+                                mcp = child['infraRsMcpIfPol']['attributes']['tnMcpIfPolName']
+                            ipg_dict['mcp'] = mcp
+
+                        if 'infraRsCdpIfPol' in child:
+                            cdp = '-'
+                            if child['infraRsCdpIfPol']['attributes']['tnCdpIfPolName']:
+                                cdp = child['infraRsCdpIfPol']['attributes']['tnCdpIfPolName']
+                            ipg_dict['cdp'] = cdp
+
+                        if 'infraRsL2IfPol' in child:
+                            l2_intf = '-'
+                            if child['infraRsL2IfPol']['attributes']['tnL2IfPolName']:
+                                l2_intf = child['infraRsL2IfPol']['attributes']['tnL2IfPolName']
+                            ipg_dict['l2_intf'] = l2_intf
+
+                        if 'infraRsLldpIfPol' in child:
+                            lldp = '-'
+                            if child['infraRsLldpIfPol']['attributes']['tnLldpIfPolName']:
+                                lldp = child['infraRsLldpIfPol']['attributes']['tnLldpIfPolName']
+                            ipg_dict['lldp'] = lldp
+
+                        if 'infraRsLacpPol' in child:
+                            lacp = '-'
+                            if child['infraRsLacpPol']['attributes']['tnLacpLagPolName']:
+                                lacp = child['infraRsLacpPol']['attributes']['tnLacpLagPolName']
+                            ipg_dict['lacp'] = lacp
+
+                if 'aep' not in ipg_dict:
+                    ipg_dict['aep'] = '-'
+
+                if 'lacp' not in ipg_dict:
+                    ipg_dict['lacp'] = '-'
+ 
+                self.ipgs[name] = ipg_dict
 
     def get_interface_data(self, target_node=''):
+
+        result = self.refresh_connection()
+
+        if result[0] == 1:
+           return
+
         # Initialize self.idict
         self.idict = {}
 
@@ -596,7 +750,6 @@ class Apic(Cmd):
                 hport_name = mo[mo_class]['attributes']['name']
                 access_port_selectors.setdefault(isl, []).append({'fex': fex, 'hport_name': hport_name, 'policy_group': pol_grp, 'interfaces': interfaces})
 
-        port_profiles = {}
         # Format:
         # {104148: {'port_sr_name': u'UCS-FI-B-PORT2', 'policy_group': u'PG-UCS2-FI-B'},  }
         #
@@ -613,13 +766,27 @@ class Apic(Cmd):
                                 nodes.append(node)
                     if nodes:
                         for node in set(nodes):
+                            if target_node:
+                                if node != target_node:
+                                    continue
                             for intf in set(port_selector_item['interfaces']):
                                 hport_dict = {}
                                 key = int(node)*1000000 + int(fex)*1000 + int(intf.split('/')[0])*100 + int(intf.split('/')[-1])
+                                if fex != '0':
+                                    intf = fex + '/' + intf
                                 hport_dict['policy_group'] = policy_group
                                 hport_dict['port_sr_name'] = port_sr_name
-                                port_profiles[key] = hport_dict
+                                hport_dict['intf_id'] = intf
+                                hport_dict['node'] = str(node)
+                                hport_dict['descr'] = ''
+                                hport_dict['portT'] = '-'
+                                hport_dict['usage'] = '-'
+                                hport_dict['operSt'] = '-'
+                                hport_dict['operSpeed'] = '-'
+                                hport_dict['operDuplex'] = '-'
 
+                                self.idict[key] = hport_dict
+        #pprint.pprint(self.idict)
         leaf_nodes = []
         # format:
         # [101, 102, 103, 104]
@@ -644,7 +811,7 @@ class Apic(Cmd):
                 if node['role'] == 'leaf' and pod['dn'] in node['dn']:
                     node_rn = 'node-' + node['id']
                     leaf_nodes.append(node_rn)
-
+        #print leaf_nodes
         # Query l1PhysIf to buils self.idict
         uri = "https://{0}/api/class/l1PhysIf.json".format(self.apic_address)
         response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
@@ -670,8 +837,15 @@ class Apic(Cmd):
                         module = intf_id.split('/')[0]
                         port = intf_id.split('/')[1]
                     idx = int(node.split('-')[-1])*1000000 + int(fex)*1000 + int(module)*100 + int(port)
-                    self.idict[idx] = {'node': node_id, 'intf_id': intf_id, 'portT': portT, 'usage': usage, 'descr': descr,
-                                       'pod': pod_id, 'operSt': '', 'operSpeed': '', 'operDuplex': ''}
+                    if idx in self.idict:
+                        self.idict[idx].update({'portT': portT, 'usage': usage, 'descr': descr,
+                                       'pod': pod_id, 'operSt': '-', 'operSpeed': '-', 'operDuplex': '-'})
+                    else:
+                        self.idict[idx] = {'node': node_id, 'intf_id': intf_id, 'portT': portT, 'usage': usage, 'descr': descr,
+                                       'pod': pod_id, 'operSt': '-', 'operSpeed': '-', 'operDuplex': '-', 'port_sr_name': '', 'policy_group': ''}
+
+            #pprint.pprint(self.idict)
+
             # Query ethpmPhysIf and add status, speed and duplex to self.idict
             uri = "https://{0}/api/class/ethpmPhysIf.json".format(self.apic_address)
             response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
@@ -701,13 +875,6 @@ class Apic(Cmd):
                             self.idict[search_idx]['operDuplex'] = phy_intf['operDuplex']
 
         # Match idx in self.idict and port_profiles to add port_sr_name and policy_group
-        for key in self.idict:
-            if key in port_profiles:
-                self.idict[key]['port_sr_name'] = port_profiles[key]['port_sr_name']
-                self.idict[key]['policy_group'] = port_profiles[key]['policy_group']
-            else:
-                self.idict[key]['port_sr_name'] = ''
-                self.idict[key]['policy_group'] = ''
 
     def get_vlan_pool(self):
 
@@ -726,14 +893,79 @@ class Apic(Cmd):
             if 'children' in inst['fvnsVlanInstP']:
                 for child in inst['fvnsVlanInstP']['children']:
                     if 'fvnsRtVlanNs' in child:
-                        domains.append(child['fvnsRtVlanNs']['attributes']['tDn'].split('uni/')[1])
+                        domains.append(str(child['fvnsRtVlanNs']['attributes']['tDn'].split('uni/')[1]))
                 for child in inst['fvnsVlanInstP']['children']:
                     if 'fvnsEncapBlk' in child:
                         from_vlan = int(child['fvnsEncapBlk']['attributes']['from'].replace('vlan-', ''))
                         to_vlan = int(child['fvnsEncapBlk']['attributes']['to'].replace('vlan-', ''))
                         self.vlan_pools.append({'name': name, 'alloc': alloc, 'domains': domains,
                                                 'from_vlan': from_vlan, 'to_vlan': to_vlan})
+
+    def print_ipgs(self):
+        
+        if self.ipgs:
+            y = PrettyTable(
+                ['NAME', 'LINK_LEVEL', 'CDP', 'MCP', 'LLDP', 'STP', 'L2_INTF', 'LINK_AGG', 'LACP', 'AEP'])
+
+            y.align = "l"
+            y.vertical_char = ' '
+            y.junction_char = ' '
+
+            for name in sorted(self.ipgs.keys()):
+                link_level = self.ipgs[name]['link_level']
+                link_agg = self.ipgs[name]['link_agg']
+                aep = self.ipgs[name]['aep']
+                stp = self.ipgs[name]['stp']
+                cdp = self.ipgs[name]['cdp']
+                lldp = self.ipgs[name]['lldp']
+                l2_intf = self.ipgs[name]['l2_intf']
+                mcp = self.ipgs[name]['mcp']
+                lacp = self.ipgs[name]['lacp']
+                y.add_row([name, link_level, cdp, mcp, lldp, stp, l2_intf, link_agg, lacp, aep])
+
+        print(y)
  
+    def print_ipg_details(self, target_ipg_name):
+       
+        print 
+        print 'NAME: {0}'.format(target_ipg_name)
+        print 
+        print 'LINK_LEVEL_POLICY: {0}'.format(self.ipgs[target_ipg_name]['link_level'])
+        print 'CDP: {0}'.format(self.ipgs[target_ipg_name]['cdp'])
+        print 'MCP: {0}'.format(self.ipgs[target_ipg_name]['mcp'])
+        print 'LLDP: {0}'.format(self.ipgs[target_ipg_name]['lldp'])
+        print 'STP: {0}'.format(self.ipgs[target_ipg_name]['stp'])
+        print 'L2_INTF: {0}'.format(self.ipgs[target_ipg_name]['l2_intf'])
+        print 'LINK_AGG: {0}'.format(self.ipgs[target_ipg_name]['link_agg'])
+        print 'LACP: {0}'.format(self.ipgs[target_ipg_name]['lacp'])
+        print 'AEP: {0}'.format(self.ipgs[target_ipg_name]['aep'])
+        print
+
+        print '* - flag indicates configured but not mapped to any EPG interfaces'
+
+        y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLOGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME",
+                         "POLICY_GROUP"])
+        y.align = "l"
+        y.vertical_char = ' '
+        y.junction_char = ' '
+
+        for key in sorted(self.idict):
+            policy_group = self.idict[key]['policy_group']
+            if policy_group == target_ipg_name:
+                flag = ''
+                node = self.idict[key]['node'].replace('node-', '')
+                intf_id = self.idict[key]['intf_id']
+                port_t = self.idict[key]['portT']
+                usage = self.idict[key]['usage']
+                oper_st = self.idict[key]['operSt']
+                oper_speed = self.idict[key]['operSpeed']
+                port_sr_name = self.idict[key]['port_sr_name']
+                if ('discovery' in usage) and (port_sr_name or policy_group):
+                    flag = '*'
+                y.add_row([flag, node, intf_id, port_t, usage, oper_st, oper_speed, port_sr_name, policy_group])
+        print(y)
+
+
     def vlan_usage(self, vlan):
         if self.vlan_pools:
             print 'VLAN:', vlan
@@ -750,14 +982,14 @@ class Apic(Cmd):
                     alloc = item['alloc']
                     from_vlan = item['from_vlan']
                     to_vlan = item['to_vlan']
-                    domains = str(item['domains'])[1:-2]
+                    domains = ','.join(item['domains'])
                     y.add_row([name, alloc, from_vlan, to_vlan, domains])
         print(y)
 
         if self.epgs:
             print '\n'
             y = PrettyTable(
-                ['TENANT', 'APP_PROFILE', 'EPG', 'TAGS'])
+                ['TENANT', 'APP_PROFILE', 'EPG', 'TAGS', 'DOMAINS'])
             y.align = "l"
             y.vertical_char = ' '
             y.junction_char = ' '
@@ -773,8 +1005,9 @@ class Apic(Cmd):
                     ap_profile = epg['ap']
                     epg_name = epg['name']
                     tags = epg['tags']
+                    domains = ','.join(epg['domains'])
 
-                    y.add_row([tenant, ap_profile, epg_name, tags])
+                    y.add_row([tenant, ap_profile, epg_name, tags, domains])
         print(y)
        
     def print_epgs(self):
@@ -783,8 +1016,9 @@ class Apic(Cmd):
             print 'TN:', epg['tn']
             print 'AP:', epg['ap']
             print 'EPG:', epg['name']
-            print 'TAG:', epg['tags']
+            print 'TAG:', ','.join(epg['tags'])
             print 'BD:', epg['bd']
+            print 'DOMAINS:', ','.join(epg['domains'])
 
             y = PrettyTable(
                 ['NODE', 'INTERFACE', 'VLAN', 'TOPOLOGY', 'USAGE', 'STATE', 'SPEED', 'PORT_SR_NAME',
@@ -841,7 +1075,7 @@ class Apic(Cmd):
 
             print(y)
 
-    def print_interface(self):
+    def print_interface(self, target_node=''):
         print '* - flag indicates configured but not mapped to any EPG interfaces'
 
         y = PrettyTable(["F", "NODE", "INTERFACE", "TOPOLOGY", "USAGE", "STATE", "SPEED", "PORT_SR_NAME",
@@ -853,6 +1087,9 @@ class Apic(Cmd):
         for key in sorted(self.idict):
             flag = ''
             node = self.idict[key]['node'].replace('node-', '')
+            if target_node:
+                if node != target_node:
+                    continue
             intf_id = self.idict[key]['intf_id']
             port_t = self.idict[key]['portT']
             usage = self.idict[key]['usage']
@@ -898,11 +1135,12 @@ class Apic(Cmd):
         for epg in self.epgs:
             for path in epg['paths']:
                 if 'vpc' in path:
-                    if (path['vpc'] == self.idict[key]['policy_group']) and (str(key)[:3] in path['protpaths']):
+                    if (path['vpc'] == self.idict[key]['policy_group']) and (self.idict[key]['node'] in path['protpaths']):
                         vlan = path['encap']
                         y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+
                 elif 'pc' in path:
-                    if (path['pc'] == self.idict[key]['policy_group']):
+                    if (path['pc'] == self.idict[key]['policy_group']) and (self.idict[key]['node'] == path['node']):
                         vlan = path['encap']
                         y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
                 elif path['idx'] == key:
@@ -921,7 +1159,7 @@ class Apic(Cmd):
             alloc = item['alloc']
             from_vlan = item['from_vlan']
             to_vlan = item['to_vlan']
-            domains = str(item['domains'])[1:-1]
+            domains = ','.join(item['domains'])
             y.add_row([name, alloc, from_vlan, to_vlan, domains])
         print(y)
 
