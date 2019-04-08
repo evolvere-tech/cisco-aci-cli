@@ -56,7 +56,7 @@ Shows VLAN pools and associated Physical/Virtual Domains. If VLAN_ID option is s
 
 Shows all snapshots including Description field, which is not available via GUI.  See “config snapshot” further below to add/amend description for any existing snapshots or to create a new OneTime snapshot with a description. 
 
-	show ipg [<IPG_NAME>]
+	show ipg [<ipg_name>]
 
 Shows policies for all Interface Policy Groups (same as GUI, but showing all interface, port-channel and vpc policy groups together, sorted by a name. If Interface Policy Group specified, then detailed information will be shown for that IPG: policies and all interfaces this policy is mapped to.
 
