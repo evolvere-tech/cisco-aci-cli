@@ -27,7 +27,7 @@ File settings/aci_settings.py needs to be amended prior running the script with 
 
 # Usage
 
-Script supports help command, auto completion for commands and auto-completes list of EPGs and list of Leaf Nodes.
+Script supports help command, auto completion for commands and auto-completes list of EPGs and list of Leaf Nodes and Interface Policy Groups.
 
 
 ## Login
@@ -58,7 +58,7 @@ Shows all snapshots including Description field, which is not available via GUI.
 
 	show ipg [<ipg_name>]
 
-Shows policies for all Interface Policy Groups (same as GUI, but showing all interface, port-channel and vpc policy groups together, sorted by a name. If Interface Policy Group specified, then detailed information will be shown for that IPG: policies and all interfaces this policy is mapped to.
+Shows policies for all Interface Policy Groups (same as GUI, but showing all interface, port-channel and vpc policy groups together, sorted by a name. If Interface Policy Group specified (IPG names auto-completed by pressing 'TAB'), then detailed information will be shown for that IPG: policies and all interfaces this policy is mapped to.
 
 ## Config commands
 
