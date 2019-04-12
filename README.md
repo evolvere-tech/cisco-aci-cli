@@ -54,7 +54,7 @@ Shows VLAN pools and associated Physical/Virtual Domains. If VLAN_ID option is s
 
 	show snapshot
 
-Shows all snapshots including Description field, which is not available via GUI.  See “config snapshot” further below to add/amend description for any existing snapshots or to create a new OneTime snapshot with a description. 
+Shows all snapshots.  See “config snapshot” further below to add/amend description for any existing snapshots or to create a new OneTime snapshot. 
 
 	show ipg [<ipg_name>]
 
