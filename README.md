@@ -42,23 +42,23 @@ Script will try all the APICs in the aci_settings file in round-robin. No need t
 
 	show epg [epg_name]
 
-Outputs EPG information along with static bindings, status of physical interfaces, interface selectors and port policy groups for all EPGs or for selected EPG (EPG names are auto-completed by using 'TAB').
+Displays EPG information along with static bindings, which includes status of physical interfaces, interface selectors and port policy groups for all EPGs or for selected EPG (EPG names are auto-completed by using 'TAB').
 
 	show interface [node] [interface]
 
-Collects status of physical interfaces on Leaf switches and related fabric configuration (interface selectors, policy groups). If node and interface options specified then shell returns EPG mappings for the target interface. 
+Displays status of physical interfaces on all or specified Leaf switches and corresponding interface selectors and policy groups. If both node and interface options specified then the tool returns EPG bindings for a target interface. Interfaces with assigned interface selectors and policy groups, but not binded to any EPG, are flagged with "*".
 
 	show vlan <vlan_id> | pool
 
-Shows VLAN pools and associated Physical/Virtual Domains. If VLAN_ID option is supplied the script will return any associated Pools and EPGs, which contain bindings with that VLAN as encapsulation.
-
-	show snapshot
-
-Shows all snapshots.  See “config snapshot” further below to add/amend description for any existing snapshots or to create a new OneTime snapshot. 
+Displays VLAN pools and associated Physical/Virtual Domains. If VLAN_ID option is supplied the tool will return any associated Pools and EPGs, which contain bindings with that VLAN as encapsulation.
 
 	show ipg [<ipg_name>]
 
-Shows policies for all Interface Policy Groups (same as GUI, but showing all interface, port-channel and vpc policy groups together, sorted by a name. If Interface Policy Group specified (IPG names auto-completed by pressing 'TAB'), then detailed information will be shown for that IPG: policies and all interfaces this policy is mapped to.
+Displays policies for all Interface Policy Groups (same as GUI, but showing all interface, port-channel and vpc policy groups together, sorted by a name). If IPG specified (IPG names auto-completed by pressing 'TAB'), then detailed information will be displayed for an IPG: policies and all interfaces this policy is mapped to.
+
+	show snapshot
+	
+Displays all snapshots.  See “config snapshot” further below to add/amend description for any existing snapshots or to create a new OneTime snapshot.
 
 ## Config commands
 
