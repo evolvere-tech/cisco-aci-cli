@@ -23,7 +23,7 @@ Script doesn't require installation and can be invoked directly:
 
 	python acli.py
 
-File settings/aci_settings.py needs to be amended prior running the script with respective credentials for APIC controllers. Multiple fabrics are supported by the script: if either username or password are not specified the script will request the login credentials.
+File settings/aci_settings.py needs to be amended prior running the script with respective credentials for APIC controllers. Multiple fabrics are supported by the script: if either username or password are not specified the script will prompt for the login credentials.
 
 # Usage
 
