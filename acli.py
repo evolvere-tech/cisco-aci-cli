@@ -458,13 +458,12 @@ class Apic(Cmd):
             return [1, ]
     
     def get_epg_data(self, epg):
-
         result = self.refresh_connection()
 
         if result[0] == 1:
            return
-
         self.epgs = []
+        epg_paths = {}
 
         if epg:
             if epg == 'ALL':
@@ -472,7 +471,7 @@ class Apic(Cmd):
 
             else:
                 classQuery = 'fvRsPathAtt'
-                propFilter3 = 'wcard(fvRsPathAtt.dn, "epg-{}")'.format(epg)
+                propFilter = 'wcard(fvRsPathAtt.dn, "epg-{}")'.format(epg)
                 uri = "https://{0}/api/node/class/{1}.json".format(self.apic_address, classQuery)
                 options = '?query-target-filter={0}'.format(propFilter)
                 uri += options
@@ -482,15 +481,6 @@ class Apic(Cmd):
 
             if response.status_code == 200:
 
-                # ALL EPGS
-                # uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                #       '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'.format(self.apic_address)
-
-                # Specified EPG
-                #     uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                #           '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'\
-                #           '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address, epg)
-
                 if response_data['imdata']:
                     for path in response_data['imdata']:
                         path_dict = []
@@ -498,7 +488,9 @@ class Apic(Cmd):
                         t_dn = path['fvRsPathAtt']['attributes']['tDn']
                         tn = dn.split('/')[1].replace('tn-', '')
                         ap = dn.split('/')[2].replace('ap-', '')
-                        epg = dn.split('/')[3].replace('epg-', '')
+                        epg_name = dn.split('/')[3].replace('epg-', '')
+
+                        epg_key = '{0}/{1}/{2}'.format(tn, ap, epg_name)
 
                         encap = path['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
                         match = re.findall(r'\[.*\]', t_dn)
@@ -536,67 +528,38 @@ class Apic(Cmd):
                                 path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
 
                         if path_dict:
-                            if epg in epgs:
-                                epgs[epg]['paths'].append(path_dict)
+                            if epg_key in epg_paths:
+                                epg_paths[epg_key]['paths'].append(path_dict)
                             else:
-                                epgs[epg] = {'name': epg, 'tn': tn, 'ap': ap, 'paths': [path_dict]}
+                                epg_paths[epg_key] = {'paths': [path_dict]}
 
-                else:
-                    msg = '{0} : code {1} - {2}.'.format(f_name, response.status_code,
-                                                                response_data['imdata'][0]['error']['attributes']['text'])
-                    error_msgs.append(msg)
-                    return {'rc': 1, 'error': error_msgs}
+            if epg == 'ALL':
 
+                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                      '&rsp-subtree-class=fvRsDomAtt,fvRsBd,tagInst'.format(self.apic_address)
 
+            else:
+                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                      '&rsp-subtree-class=fvRsDomAtt,fvRsBd,tagInst'\
+                      '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address, epg)
 
-                for epg in response['imdata']:
-                    paths = []
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False)
+            response_data = response.json()
+
+            if response.status_code == 200:
+                for epg_data in response_data['imdata']:
                     tags = []
                     domains = []
-                    name = epg['fvAEPg']['attributes']['name']
-                    tn = epg['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
-                    ap = epg['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
-                    if 'children' in epg['fvAEPg']:
-                        for child in epg['fvAEPg']['children']:
-                            if 'fvRsPathAtt' in child:
-                                encap = child['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
-                                t_dn = child['fvRsPathAtt']['attributes']['tDn']
-                                match = re.findall('\[.*\]', t_dn)
-                                pathep = match[0].strip('[]')
+                    epg_name = epg_data['fvAEPg']['attributes']['name']
+                    tn = epg_data['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
+                    ap = epg_data['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
 
-                                if 'protpaths' in t_dn:
-                                    protpaths = t_dn.split('/')[2]
-                                    vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
-                                    path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
-                                    paths.append(path_dict)
+                    epg_key = '{0}/{1}/{2}'.format(tn, ap, epg_name)
 
-                                elif '/paths' in t_dn:
+                    if 'children' in epg_data['fvAEPg']:
+                        for child in epg_data['fvAEPg']['children']:
 
-                                    if 'eth' in pathep and not 'extpaths-' in t_dn:
-                                        intf_id = pathep.replace('eth', '')
-                                        node = t_dn.split('/')[2].replace('paths-', '')
-                                        fex = 0
-                                        idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
-                                            int(str(intf_id).split('/')[-1])
-                                        path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
-                                        paths.append(path_dict)
-
-                                    elif 'eth' in pathep and 'extpaths-' in t_dn:
-                                        intf_id = pathep.replace('eth', '')
-                                        node = t_dn.split('/')[2].replace('paths-', '')
-                                        fex = t_dn.split('/')[3].replace('extpaths-', '')
-                                        idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
-                                            int(str(intf_id).split('/')[-1])
-                                        path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
-                                        paths.append(path_dict)
-
-                                    elif not 'eth' in pathep:
-                                        policy_grp = pathep
-                                        node = t_dn.split('/')[2].replace('paths-', '')
-                                        path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
-                                        paths.append(path_dict)
-
-                            elif 'tagInst' in child:
+                            if 'tagInst' in child:
                                 tags.append(child['tagInst']['attributes']['name'])
 
                             elif 'fvRsBd' in child:
@@ -611,8 +574,12 @@ class Apic(Cmd):
                             elif 'fvRsDomAtt' in child:
                                 domains.append(str(child['fvRsDomAtt']['attributes']['tDn'].split('/')[1])) 
 
-                    paths_sorted = sorted(paths, key=lambda k: k['idx'])
-                    epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'domains': domains, 'paths': paths_sorted, 'tags': tags}
+                    if epg_key in epg_paths:
+                        paths_sorted = sorted(epg_paths[epg_key]['paths'], key=lambda k: k['idx'])
+                    else:
+                        paths_sorted = []
+
+                    epg_dict = {'epg_name': epg_name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'domains': domains, 'paths': paths_sorted, 'tags': tags}
                     self.epgs.append(epg_dict)
 
     def get_ipg_data(self):
@@ -1075,7 +1042,7 @@ class Apic(Cmd):
                 if vlan_used:
                     tenant = epg['tn']
                     ap_profile = epg['ap']
-                    epg_name = epg['name']
+                    epg_name = epg['epg_name']
                     tags = epg['tags']
                     domains = ','.join(epg['domains'])
 
@@ -1087,7 +1054,7 @@ class Apic(Cmd):
             print '\n'
             print 'TN:', epg['tn']
             print 'AP:', epg['ap']
-            print 'EPG:', epg['name']
+            print 'EPG:', epg['epg_name']
             print 'TAG:', ','.join(epg['tags'])
             print 'BD:', epg['bd']
             print 'DOMAINS:', ','.join(epg['domains'])
@@ -1209,15 +1176,15 @@ class Apic(Cmd):
                 if 'vpc' in path:
                     if (path['vpc'] == self.idict[key]['policy_group']) and (self.idict[key]['node'] in path['protpaths']):
                         vlan = path['encap']
-                        y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+                        y.add_row([epg['tn'], epg['ap'], epg['epg_name'], epg['bd'], vlan])
 
                 elif 'pc' in path:
                     if (path['pc'] == self.idict[key]['policy_group']) and (self.idict[key]['node'] == path['node']):
                         vlan = path['encap']
-                        y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+                        y.add_row([epg['tn'], epg['ap'], epg['epg_name'], epg['bd'], vlan])
                 elif path['idx'] == key:
                     vlan = path['encap']
-                    y.add_row([epg['tn'], epg['ap'], epg['name'], epg['bd'], vlan])
+                    y.add_row([epg['tn'], epg['ap'], epg['epg_name'], epg['bd'], vlan])
         print (y)
 
     def print_vlan_pool(self):
