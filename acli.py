@@ -465,83 +465,155 @@ class Apic(Cmd):
            return
 
         self.epgs = []
+
         if epg:
             if epg == 'ALL':
-                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                      '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'.format(self.apic_address)
+                uri = 'https://{0}/api/class/fvRsPathAtt.json'.format(self.apic_address)
 
             else:
-                uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
-                      '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'\
-                      '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address, epg)
+                classQuery = 'fvRsPathAtt'
+                propFilter3 = 'wcard(fvRsPathAtt.dn, "epg-{}")'.format(epg)
+                uri = "https://{0}/api/node/class/{1}.json".format(self.apic_address, classQuery)
+                options = '?query-target-filter={0}'.format(propFilter)
+                uri += options
 
-            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False).json()
+            response = self.session.get(uri, headers=self.headers, cookies=self.cookie, verify=False)
+            response_data = response.json()
 
-            for epg in response['imdata']:
-                paths = []
-                tags = []
-                domains = []
-                name = epg['fvAEPg']['attributes']['name']
-                tn = epg['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
-                ap = epg['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
-                if 'children' in epg['fvAEPg']:
-                    for child in epg['fvAEPg']['children']:
-                        if 'fvRsPathAtt' in child:
-                            encap = child['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
-                            t_dn = child['fvRsPathAtt']['attributes']['tDn']
-                            match = re.findall('\[.*\]', t_dn)
-                            pathep = match[0].strip('[]')
+            if response.status_code == 200:
 
-                            if 'protpaths' in t_dn:
-                                protpaths = t_dn.split('/')[2]
-                                vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
-                                path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
-                                paths.append(path_dict)
+                # ALL EPGS
+                # uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                #       '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'.format(self.apic_address)
 
-                            elif '/paths' in t_dn:
+                # Specified EPG
+                #     uri = 'https://{0}/api/class/fvAEPg.json?rsp-subtree=children'\
+                #           '&rsp-subtree-class=fvRsPathAtt,fvRsDomAtt,fvRsBd,tagInst'\
+                #           '&query-target-filter=eq(fvAEPg.name, "{1}")'.format(self.apic_address, epg)
 
-                                if 'eth' in pathep and not 'extpaths-' in t_dn:
-                                    intf_id = pathep.replace('eth', '')
-                                    node = t_dn.split('/')[2].replace('paths-', '')
-                                    fex = 0
-                                    idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+                if response_data['imdata']:
+                    for path in response_data['imdata']:
+                        path_dict = []
+                        dn = path['fvRsPathAtt']['attributes']['dn']
+                        t_dn = path['fvRsPathAtt']['attributes']['tDn']
+                        tn = dn.split('/')[1].replace('tn-', '')
+                        ap = dn.split('/')[2].replace('ap-', '')
+                        epg = dn.split('/')[3].replace('epg-', '')
+
+                        encap = path['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
+                        match = re.findall(r'\[.*\]', t_dn)
+                        pathep = match[0].strip('[]')
+
+                        if 'protpaths' in t_dn:
+                            protpaths = t_dn.split('/')[2]
+                            vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
+                            path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
+
+                        elif '/paths' in t_dn:
+
+                            if 'eth' in pathep and not 'extpaths-' in t_dn:
+                                intf_id = pathep.replace('eth', '')
+                                node = t_dn.split('/')[2].replace('paths-', '')
+                                fex = 0
+                                idx = int(node) * 1000000 + int(fex) * 1000 + int(
+                                    str(intf_id).split('/')[0]) * 100 + \
                                         int(str(intf_id).split('/')[-1])
-                                    path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
-                                    paths.append(path_dict)
+                                path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
 
-                                elif 'eth' in pathep and 'extpaths-' in t_dn:
-                                    intf_id = pathep.replace('eth', '')
-                                    node = t_dn.split('/')[2].replace('paths-', '')
-                                    fex = t_dn.split('/')[3].replace('extpaths-', '')
-                                    idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+
+                            elif 'eth' in pathep and 'extpaths-' in t_dn:
+                                intf_id = pathep.replace('eth', '')
+                                node = t_dn.split('/')[2].replace('paths-', '')
+                                fex = t_dn.split('/')[3].replace('extpaths-', '')
+                                idx = int(node) * 1000000 + int(fex) * 1000 + int(
+                                    str(intf_id).split('/')[0]) * 100 + \
                                         int(str(intf_id).split('/')[-1])
-                                    path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
-                                    paths.append(path_dict)
+                                path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
 
-                                elif not 'eth' in pathep:
-                                    policy_grp = pathep
-                                    node = t_dn.split('/')[2].replace('paths-', '')
-                                    path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
-                                    paths.append(path_dict)
+                            elif not 'eth' in pathep:
+                                policy_grp = pathep
+                                node = t_dn.split('/')[2].replace('paths-', '')
+                                path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
 
-                        elif 'tagInst' in child:
-                            tags.append(child['tagInst']['attributes']['name'])
-
-                        elif 'fvRsBd' in child:
-                            t_dn = child['fvRsBd']['attributes']['tDn']
-                            if t_dn:
-                                bd_tn = t_dn.split('/')[1].replace('tn-', '')
-                                bd = t_dn.split('/')[2].replace('BD-', '')
-                                bd_full = bd_tn + '/' + bd
+                        if path_dict:
+                            if epg in epgs:
+                                epgs[epg]['paths'].append(path_dict)
                             else:
-                                bd_tn = ''
-                                bd_full = child['fvRsBd']['attributes']['tnFvBDName']
-                        elif 'fvRsDomAtt' in child:
-                            domains.append(str(child['fvRsDomAtt']['attributes']['tDn'].split('/')[1])) 
+                                epgs[epg] = {'name': epg, 'tn': tn, 'ap': ap, 'paths': [path_dict]}
 
-                paths_sorted = sorted(paths, key=lambda k: k['idx'])
-                epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'domains': domains, 'paths': paths_sorted, 'tags': tags}
-                self.epgs.append(epg_dict)
+                else:
+                    msg = '{0} : code {1} - {2}.'.format(f_name, response.status_code,
+                                                                response_data['imdata'][0]['error']['attributes']['text'])
+                    error_msgs.append(msg)
+                    return {'rc': 1, 'error': error_msgs}
+
+
+
+                for epg in response['imdata']:
+                    paths = []
+                    tags = []
+                    domains = []
+                    name = epg['fvAEPg']['attributes']['name']
+                    tn = epg['fvAEPg']['attributes']['dn'].split('/')[1].replace('tn-', '')
+                    ap = epg['fvAEPg']['attributes']['dn'].split('/')[2].replace('ap-', '')
+                    if 'children' in epg['fvAEPg']:
+                        for child in epg['fvAEPg']['children']:
+                            if 'fvRsPathAtt' in child:
+                                encap = child['fvRsPathAtt']['attributes']['encap'].replace('vlan-', '')
+                                t_dn = child['fvRsPathAtt']['attributes']['tDn']
+                                match = re.findall('\[.*\]', t_dn)
+                                pathep = match[0].strip('[]')
+
+                                if 'protpaths' in t_dn:
+                                    protpaths = t_dn.split('/')[2]
+                                    vpc = t_dn.split('/')[-1].split('[')[-1][:-1]
+                                    path_dict = {'vpc': vpc, 'protpaths': protpaths, 'encap': encap, 'idx': 0}
+                                    paths.append(path_dict)
+
+                                elif '/paths' in t_dn:
+
+                                    if 'eth' in pathep and not 'extpaths-' in t_dn:
+                                        intf_id = pathep.replace('eth', '')
+                                        node = t_dn.split('/')[2].replace('paths-', '')
+                                        fex = 0
+                                        idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+                                            int(str(intf_id).split('/')[-1])
+                                        path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
+                                        paths.append(path_dict)
+
+                                    elif 'eth' in pathep and 'extpaths-' in t_dn:
+                                        intf_id = pathep.replace('eth', '')
+                                        node = t_dn.split('/')[2].replace('paths-', '')
+                                        fex = t_dn.split('/')[3].replace('extpaths-', '')
+                                        idx = int(node)*1000000 + int(fex)*1000 + int(str(intf_id).split('/')[0])*100 +\
+                                            int(str(intf_id).split('/')[-1])
+                                        path_dict = {'idx': idx, 'node': node, 'intf_id': intf_id, 'encap': encap}
+                                        paths.append(path_dict)
+
+                                    elif not 'eth' in pathep:
+                                        policy_grp = pathep
+                                        node = t_dn.split('/')[2].replace('paths-', '')
+                                        path_dict = {'idx': 0, 'node': node, 'pc': policy_grp, 'encap': encap}
+                                        paths.append(path_dict)
+
+                            elif 'tagInst' in child:
+                                tags.append(child['tagInst']['attributes']['name'])
+
+                            elif 'fvRsBd' in child:
+                                t_dn = child['fvRsBd']['attributes']['tDn']
+                                if t_dn:
+                                    bd_tn = t_dn.split('/')[1].replace('tn-', '')
+                                    bd = t_dn.split('/')[2].replace('BD-', '')
+                                    bd_full = bd_tn + '/' + bd
+                                else:
+                                    bd_tn = ''
+                                    bd_full = child['fvRsBd']['attributes']['tnFvBDName']
+                            elif 'fvRsDomAtt' in child:
+                                domains.append(str(child['fvRsDomAtt']['attributes']['tDn'].split('/')[1])) 
+
+                    paths_sorted = sorted(paths, key=lambda k: k['idx'])
+                    epg_dict = {'name': name, 'tn': tn, 'ap': ap, 'bd': bd_full, 'domains': domains, 'paths': paths_sorted, 'tags': tags}
+                    self.epgs.append(epg_dict)
 
     def get_ipg_data(self):
 
