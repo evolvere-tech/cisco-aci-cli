@@ -23,13 +23,14 @@
 #    under the License.                                                        #
 #                                                                              #
 ################################################################################
-
+#!/usr/bin/env python
 import pprint
 import requests
 import re
 import sys
 import datetime
 import json
+import yaml
 from requests.packages.urllib3.exceptions import InsecureRequestWarning, InsecurePlatformWarning, SNIMissingWarning
 from cmd import Cmd
 from operator import attrgetter, itemgetter
@@ -37,9 +38,11 @@ from getpass import getpass
 from prettytable import PrettyTable
 
 try:
-    from settings.aci_settings import FABRICS
+    with open('config.yml', 'r') as fh:
+        config = fh.read()
+    FABRICS = yaml.load(config, Loader=yaml.FullLoader)
 except:
-    sys.exit('ERROR: Missing or incorrect aci_settings.py file.')
+    sys.exit('ERROR: Missing or incorrect config.yml settings.py file.')
 
 SHOW_CMDS = ['epg', 'interface', 'vlan', 'snapshot', 'ipg']
 SHOW_EPG_CMDS = ['NAME', 'all|ALL']

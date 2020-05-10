@@ -1,0 +1,21 @@
+---
+F1:
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt
+F2:
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt
+  - address: sandboxapicdc.cisco.com
+    username: admin
+    password: ciscopsdt

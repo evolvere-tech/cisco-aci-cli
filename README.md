@@ -19,11 +19,17 @@ If you have git installed, clone the repository
 
 ## Installation
 
+Create a virtual env (optional):
+
+    virtualenv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+
 Script doesn't require installation and can be invoked directly:
 
 	python acli.py
 
-File settings/aci_settings.py needs to be amended prior running the script with respective credentials for APIC controllers. Multiple fabrics are supported by the script: if either username or password are not specified the script will prompt for the login credentials.
+File config.yml needs to be amended prior running the script with respective credentials for APIC controllers. Multiple fabrics are supported by the script: if either username or password are not specified the script will prompt for the login credentials.
 
 # Usage
 
