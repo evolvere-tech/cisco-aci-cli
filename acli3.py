@@ -91,7 +91,7 @@ class Apic(Cmd):
             print("Usage: login [FABRIC_NAME]"    )
         else:
             parameters = args.split()
-            if parameters[0] in list(FABRICS.keys()):
+            if parameters[0] in FABRICS.keys():
                 self.fabric = FABRICS[parameters[0]]
                 self.username = ''
                 self.password = ''
@@ -301,7 +301,7 @@ class Apic(Cmd):
             if text:
                 return [i for i in FABRICS if i.startswith(text)]
             else:
-                return FABRICS.keys()
+                return list(FABRICS.keys())
 
     def do_quit(self, args):
         """Quits the program."""
