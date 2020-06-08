@@ -8,7 +8,7 @@ The ACLI is a command line shell for Cisco ACI APIC. A set of commands was devel
 
 Required
 
-* Python 2.7+
+* Python 2.7 or Python3.5 or later
 * PrettyTable
 
 ## Downloading
